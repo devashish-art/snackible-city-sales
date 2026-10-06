@@ -180,6 +180,16 @@ function cm2Entry(p, label) { const e = (CM2.data || {})[p + '_' + label]; retur
 function cfgFor(p, label) {
   const e = cm2Entry(p, label);
   if (e && e.config) return { cfg: e.config, src: 'CM2 · ' + label };
+  // Month not in CM2 yet → rates of the latest earlier month in CM2 for this portal
+  const ord = l => { const [m, y] = String(l || '').split(' '); const mi = MONTH_NAMES.indexOf(m); return mi < 0 || !+y ? -1 : (+y) * 12 + mi; };
+  const target = ord(label);
+  let best = null, bestO = -1;
+  Object.keys(CM2.data || {}).forEach(k => {
+    if (String(k).split('_')[0] !== p) return;
+    const l = String(k).split('_').slice(1).join('_'), o = ord(l), en = CM2.data[k];
+    if (o >= 0 && o < target && o > bestO && en && en.config) { best = { cfg: en.config, src: 'CM2 · ' + l + ' (latest available)' }; bestO = o; }
+  });
+  if (best) return best;
   if (CM2.config && CM2.config[p]) return { cfg: CM2.config[p], src: 'CM2 latest settings' };
   return { cfg: DEFAULT_CFG, src: 'Default (CM2 not loaded)' };
 }

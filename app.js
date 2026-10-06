@@ -17,7 +17,7 @@ const PERIODS = { all:'Full month', 1:'1st – 10th', 2:'11th – 20th', 3:'21st
 const ST = { geo:'city', view:'overview', ym:null, period:'all', portal:'all', split:'netSales', city:null,
              metric:'ns', open:{}, sideCollapsed:false, loading:false };
 let MONTHS_AVAIL = [], DATA = {}, CM2 = { config:{}, data:{} }, CM2_OK = false;
-let MAP = null, MAP_OK = false, FACTS = [], INFO = {}, CHARTS = [];
+let MAP = null, MAP_OK = false, FACTS = [], INFO = {}, CHARTS = [], LOAD_ERR = '';
 
 // ── Helpers ───────────────────────────────────────────
 const fmt    = n => Math.round(+n || 0).toLocaleString('en-IN');
@@ -135,10 +135,15 @@ const CITY_STATE = {"mumbai":"Maharashtra","navi mumbai":"Maharashtra","thane":"
 let CITY_MAP = {}, STATE_MAP = {};
 function stateOf(city) {
   const k = String(city || '').trim().toLowerCase();
-  return STATE_MAP[k] || CITY_STATE[k] || 'Unmapped state';
+  return STATE_MAP[k] || CITY_STATE[k] || PAREN_STATE[k] || 'Unmapped state';
 }
+const PAREN_STATE = {};
 function normCity(c) {
-  const k = String(c || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  let k = String(c || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (CITY_MAP[k]) return CITY_MAP[k];
+  // "Aurangabad (Maharashtra)" → city Aurangabad, state Maharashtra
+  const pm = k.match(/^(.+?)\s*\((.+)\)$/);
+  if (pm) { k = pm[1].trim(); PAREN_STATE[k] = pm[2].trim().replace(/\b\w/g, x => x.toUpperCase()); }
   if (!k) return 'Unknown';
   if (CITY_MAP[k]) return CITY_MAP[k];
   if (CITY_ALIAS[k]) return CITY_ALIAS[k];
@@ -171,7 +176,7 @@ async function loadMonth(ym, nocache) {
 }
 
 // ── Build facts: one row per portal · city · SKU · period ──
-function cm2Entry(p, label) { return CM2.data[p + '_' + label] || null; }
+function cm2Entry(p, label) { const e = (CM2.data || {})[p + '_' + label]; return e && typeof e === 'object' ? e : null; }
 function cfgFor(p, label) {
   const e = cm2Entry(p, label);
   if (e && e.config) return { cfg: e.config, src: 'CM2 · ' + label };
@@ -182,12 +187,14 @@ function costIndex(label) {
   // key → cost per portal for this month, then any portal this month, then most recent earlier month
   const idx = { byP:{}, any:{}, hist:{} };
   const keys = Object.keys(CM2.data || {});
-  const order = l => { const [m, y] = l.split(' '); return (+y) * 12 + MONTH_NAMES.indexOf(m); };
+  const order = l => { const [m, y] = String(l || '').split(' '); const mi = MONTH_NAMES.indexOf(m); return mi < 0 || !+y ? -1 : (+y) * 12 + mi; };
   const target = order(label);
-  keys.sort((a, b) => order(a.split('_')[1]) - order(b.split('_')[1])).forEach(k => {
-    const [p, l] = [k.split('_')[0], k.split('_').slice(1).join('_')];
-    const e = CM2.data[k]; const o = order(l);
-    [...(e.skus || []), ...(e.nlcSkus || [])].forEach(s => {
+  const lab = k => String(k).split('_').slice(1).join('_');
+  keys.filter(k => order(lab(k)) >= 0 && CM2.data[k] && typeof CM2.data[k] === 'object')
+      .sort((a, b) => order(lab(a)) - order(lab(b))).forEach(k => {
+    const p = String(k).split('_')[0], e = CM2.data[k], o = order(lab(k));
+    [...(Array.isArray(e.skus) ? e.skus : []), ...(Array.isArray(e.nlcSkus) ? e.nlcSkus : [])].forEach(s => {
+      if (!s || !s.name) return;
       const c = +s.cost || 0; if (!c) return; const id = identify(p, s.name).key;
       if (o === target) { (idx.byP[p] = idx.byP[p] || {})[id] = c; idx.any[id] = c; }
       else if (o < target) idx.hist[id] = c;
@@ -530,7 +537,8 @@ function render() {
   let body;
   if (!ST.ym) body = '<div class="card empty">No months found in the City Sales sheet yet. Paste your first pivot and click ↻.</div>';
   else body = ({ overview: vOverview, city: vCity, matrix: vMatrix, health: vHealth }[ST.view] || vOverview)();
-  document.getElementById('app').innerHTML = '<div class="shell">' + sidebar() + '<main class="main">' + body + '</main></div>';
+  const err = LOAD_ERR ? '<div class="warn-bar" style="margin:0 0 16px">Something failed while loading: ' + esc(LOAD_ERR) + '</div>' : '';
+  document.getElementById('app').innerHTML = '<div class="shell">' + sidebar() + '<main class="main">' + err + body + '</main></div>';
   if (ST.view === 'overview') drawOverviewChart();
   if (ST.view === 'city') drawCityChart();
 }
@@ -540,7 +548,7 @@ function setPeriod(p) { ST.period = p === 'all' ? 'all' : +p; render(); }
 function setSplit(s) { ST.split = s; buildFacts(); render(); }
 async function setMonth(ym) {
   ST.ym = ym; showLoading('Loading ' + ymLabel(ym) + '…');
-  try { await loadMonth(ym); buildFacts(); } catch (e) { toast('Could not load ' + ymLabel(ym) + ': ' + e.message, 'err'); }
+  try { await loadMonth(ym); buildFacts(); LOAD_ERR = ''; } catch (e) { LOAD_ERR = String(e && e.stack || e).split('\n').slice(0, 3).join(' | '); toast('Could not load ' + ymLabel(ym) + ': ' + e.message, 'err'); }
   render();
 }
 async function refresh() {
@@ -549,8 +557,8 @@ async function refresh() {
     await Promise.all([loadCM2(), loadMap(), loadMonths()]);
     if (!MONTHS_AVAIL.includes(ST.ym)) ST.ym = MONTHS_AVAIL[MONTHS_AVAIL.length - 1] || null;
     if (ST.ym) await loadMonth(ST.ym, true);
-    buildFacts(); toast('Data refreshed');
-  } catch (e) { toast('Refresh failed: ' + e.message, 'err'); }
+    buildFacts(); LOAD_ERR = ''; toast('Data refreshed');
+  } catch (e) { LOAD_ERR = String(e && e.stack || e).split('\n').slice(0, 3).join(' | '); toast('Refresh failed: ' + e.message, 'err'); }
   render();
 }
 function showLoading(msg) { const m = document.querySelector('.main'); if (m) m.innerHTML = '<div class="loading"><div class="spin"></div><div>' + msg + '</div></div>'; }
@@ -599,7 +607,8 @@ async function init() {
     await Promise.all([loadCM2(), loadMap(), loadMonths()]);
     ST.ym = MONTHS_AVAIL[MONTHS_AVAIL.length - 1] || null;
     if (ST.ym) { await loadMonth(ST.ym); buildFacts(); }
-  } catch (e) { toast('Load failed: ' + e.message, 'err'); }
+    LOAD_ERR = '';
+  } catch (e) { LOAD_ERR = (e && e.stack) ? e.stack.split('\n').slice(0, 3).join(' | ') : String(e); console.error(e); toast('Load failed: ' + e.message, 'err'); }
   render();
 }
 

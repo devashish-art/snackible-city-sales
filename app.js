@@ -157,9 +157,19 @@ async function loadCM2() {
   catch (e) { CM2_OK = false; }
   if (!CM2_OK && DEMO) { CM2 = demoCM2(); CM2_OK = true; }
 }
+let MAP_INFO = { n: 0, err: '' };
 async function loadMap() {
-  try { const r = await getJSON(CM2_API + '?action=getSkuMap'); MAP = buildMap(r.rows || []); MAP_OK = true; }
-  catch (e) { MAP = buildMap([]); MAP_OK = false; }
+  // SKU_Map lives in the CM2 backend; retry a couple of times because it is fetched alongside CM2 data
+  MAP_INFO = { n: 0, err: '' };
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await getJSON(CM2_API + '?action=getSkuMap&t=' + Date.now());
+      if (r && r.error) throw new Error(r.error);
+      const rows = (r && r.rows) || [];
+      MAP = buildMap(rows); MAP_OK = true; MAP_INFO = { n: rows.length, err: rows.length ? '' : 'SKU_Map returned 0 rows' };
+      break;
+    } catch (e) { MAP = buildMap([]); MAP_OK = false; MAP_INFO = { n: 0, err: String(e.message || e) }; await new Promise(res => setTimeout(res, 800)); }
+  }
   Object.keys(ID_CACHE).forEach(k => delete ID_CACHE[k]);
 }
 async function loadMonths() {
@@ -514,7 +524,7 @@ function vMatrix() {
   const cols = [...top, '__others'];
   const rows = skus.map(s => {
     const max = Math.max(...cols.map(c => { const a = cell[s.key + '||' + c]; return a ? mFn(fin(a)) : 0; }));
-    return '<tr><td title="' + esc(s.label) + '">' + esc(s.label) + '</td>' + cols.map(c => show(cell[s.key + '||' + c], max)).join('') + show(Object.assign({}, s.tot), Math.max(max, mFn(s.tot))) + '</tr>';
+    return '<tr><td title="' + esc(s.label) + '">' + (s.key.startsWith('A|') ? '<span class="tag warn" title="Not in SKU_Map">Unmapped</span>' : '') + esc(s.label) + '</td>' + cols.map(c => show(cell[s.key + '||' + c], max)).join('') + show(Object.assign({}, s.tot), Math.max(max, mFn(s.tot))) + '</tr>';
   }).join('');
   const sel = '<div class="seg">' + Object.entries(M).map(([k, v]) => '<button class="' + (ST.metric === k ? 'on' : '') + '" onclick="ST.metric=\'' + k + '\';render()">' + v[0] + '</button>').join('') + '</div>';
   const grand = fin(list.reduce(add, blank()));
@@ -552,7 +562,8 @@ function vHealth() {
     + '<div class="card"><div class="thead-row"><div class="thead-title">Instamart NLC SKUs (' + Object.keys(INFO.nlcSplit || {}).length + ')</div></div><div class="twrap" style="max-height:260px"><table class="tbl hgrid"><thead><tr><th>SKU</th><th>NLC Price</th><th>NLC share</th><th class="l">Share from</th></tr></thead><tbody>'
     + (Object.entries(INFO.nlcSplit || {}).map(([n, v]) => '<tr><td title="' + esc(n) + '">' + esc(n) + '</td><td>' + (v.price ? '₹' + v.price : '—') + '</td><td>' + fmtPct(v.share * 100) + '</td><td class="l muted">' + esc(v.src) + '</td></tr>').join('')
     + Object.keys(INFO.nlcNoPrice || {}).map(n => '<tr><td>' + esc(n) + '</td><td class="neg">missing</td><td class="neg">treated regular</td><td class="l neg">Add to Swiggy_NLC_Prices</td></tr>').join('') || '<tr><td colspan="3" class="empty">No Instamart SKU matched the NLC price sheet</td></tr>') + '</tbody></table></div></div></div>'
-    + '<div class="card mb20"><div class="thead-row"><div class="thead-title">SKU mapping</div></div>'
+    + '<div class="card mb20"><div class="thead-row"><div class="thead-title">SKU mapping</div><button class="btn" onclick="reloadMap()">↻ Reload SKU_Map</button></div>'
+    + (MAP_INFO.n ? '<div class="ok-bar">SKU_Map loaded from CM2: ' + MAP_INFO.n + ' rows.</div>' : '<div class="warn-bar">SKU_Map not loaded from CM2' + (MAP_INFO.err ? ': ' + esc(MAP_INFO.err) : '') + '. Every SKU is being auto matched. Click Reload SKU_Map.</div>')
     + bar(!unm.length, 'All city file SKU names are in SKU_Map (shared with CM2).', unm.length + ' SKU names not in SKU_Map, matched automatically. Add them to the CM2 SKU_Map tab. ', '<button class="btn" onclick="copyTSV(\'UNMAPPED_TSV\')">📋 Copy unmapped</button>')
     + (unm.length ? '<div class="twrap" style="max-height:260px"><table class="tbl hgrid"><thead><tr><th>Portal SKU name</th><th class="l">Portal</th><th class="l">Matched as</th></tr></thead><tbody>' + unm.map(u => '<tr><td title="' + esc(u.sku) + '">' + esc(u.sku) + '</td><td class="l">' + pLabel(u.p) + '</td><td class="l muted">' + esc(u.label) + '</td></tr>').join('') + '</tbody></table></div>' : '') + '</div>'
     + '<div class="card mb20"><div class="thead-row"><div class="thead-title">Cost per unit</div></div>'
@@ -681,6 +692,10 @@ function render() {
   document.getElementById('app').innerHTML = '<div class="shell">' + sidebar() + '<main class="main">' + err + body + '</main></div>';
   if (ST.view === 'overview') drawOverviewChart();
   if (ST.view === 'city') drawCityChart();
+}
+async function reloadMap() {
+  showLoading('Reloading SKU_Map…'); await loadMap(); buildFacts(); render();
+  toast(MAP_INFO.n ? 'SKU_Map loaded · ' + MAP_INFO.n + ' rows' : 'SKU_Map failed: ' + MAP_INFO.err, MAP_INFO.n ? '' : 'err');
 }
 function go(v) { ST.view = v; ST.open = {}; render(); }
 function setPortal(p) { ST.portal = p; render(); }

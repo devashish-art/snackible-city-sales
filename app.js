@@ -177,6 +177,20 @@ async function loadMonth(ym, nocache) {
 
 // ── Build facts: one row per portal · city · SKU · period ──
 function cm2Entry(p, label) { const e = (CM2.data || {})[p + '_' + label]; return e && typeof e === 'object' ? e : null; }
+function latestCM2Before(p, label) {
+  const ord = l => { const [m, y] = String(l || '').split(' '); const mi = MONTH_NAMES.indexOf(m); return mi < 0 || !+y ? -1 : (+y) * 12 + mi; };
+  const target = ord(label); let best = null, bestO = -1;
+  Object.keys(CM2.data || {}).forEach(k => {
+    if (String(k).split('_')[0] !== p) return;
+    const l = String(k).split('_').slice(1).join('_'), o = ord(l), en = CM2.data[k];
+    if (o >= 0 && o < target && o > bestO && en && typeof en === 'object') { best = { e: en, label: l }; bestO = o; }
+  });
+  return best;
+}
+function adsNote() {
+  const ests = PORTALS.map(p => (INFO.portals || {})[p]).filter(x => x && x.est);
+  return ests.length ? ' (estimated from ' + ests[0].est.from + ')' : '';
+}
 function cfgFor(p, label) {
   const e = cm2Entry(p, label);
   if (e && e.config) return { cfg: e.config, src: 'CM2 · ' + label };
@@ -315,14 +329,23 @@ function buildFacts() {
       });
     });
     // Ads + visibility: CM2 total for this portal-month, spread by net sales (or qty) share
-    const e = cm2Entry(p, label); let t = null, adsvis = 0;
-    if (e) {
-      t = totals(e.skus, e.nlcSkus, e.config || cfg, Object.assign({}, e.portalTotals || {}, { splitBy: ST.split }), Object.assign({}, e.nlcTotals || {}, { splitBy: ST.split }));
-      adsvis = t.ads + t.vis;
+    const e = cm2Entry(p, label); let t = null, adsvis = 0, est = null;
+    const tot = en => totals(en.skus, en.nlcSkus, en.config || cfg, Object.assign({}, en.portalTotals || {}, { splitBy: ST.split }), Object.assign({}, en.nlcTotals || {}, { splitBy: ST.split }));
+    if (e) { t = tot(e); adsvis = t.ads + t.vis; }
+    else {
+      // Month not in CM2 yet: estimate with the latest earlier month's Ads + Vis as % of Net Sales
+      const prev = latestCM2Before(p, label);
+      if (prev) {
+        const pt = tot(prev.e), pctAV = pt.netSales > 0 ? (pt.ads + pt.vis) / pt.netSales : 0;
+        const ns = out.reduce((a, x) => a + x.ns, 0);
+        adsvis = ns * pctAV; est = { from: prev.label, pct: pctAV * 100 };
+      }
+    }
+    if (adsvis) {
       const w = x => ST.split === 'qty' ? x.qty : x.ns, tw = out.reduce((a, x) => a + w(x), 0);
       if (tw > 0) out.forEach(x => { x.adsvis = adsvis * w(x) / tw; });
     }
-    INFO.portals[p] = { cfg, rateSrc, cm2: t, adsvis, hasCM2: !!e, rows: src[p].sales.length };
+    INFO.portals[p] = { cfg, rateSrc, cm2: t, adsvis, est, hasCM2: !!e, rows: src[p].sales.length };
     FACTS.push(...out);
   });
 }
@@ -421,7 +444,7 @@ function vOverview() {
     + kpi(geoWord(true, true), cities.length, ST.portal === 'all' ? 'with sales on any portal' : 'on ' + pLabel(ST.portal))
     + kpi('Top ' + geoWord(false, true), cities[0] ? esc(cities[0].label) : '—', cities[0] ? fmtPct(pct(cities[0].tot.ns, grand.ns)) + ' of net sales' : '')
     + kpi('Top 5 Share', fmtPct(pct(top5, grand.ns)), 'of net sales')
-    + kpi('Promos', '₹' + fmt(grand.promos), fmtPct(promoPct) + ' of GMV · Ads + Vis ₹' + fmt(grand.adsvis))
+    + kpi('Promos', '₹' + fmt(grand.promos), fmtPct(promoPct) + ' of GMV · Ads + Vis ₹' + fmt(grand.adsvis) + adsNote())
     + '</div>'
     + '<div class="card mb20"><div class="thead-row"><div class="thead-title">Top 15 ' + geoWord(true, true) + ' by Net Sales</div><div style="display:flex;gap:10px;align-items:center"><span class="lbl-sm">Stacked by portal · hover for CM2%</span>' + geoSeg() + '</div></div><div class="chart-box"><canvas id="ch-cities"></canvas></div></div>'
     + '<div class="card" id="card-cities"><div class="thead-row"><div class="thead-title">' + geoWord(false, true) + ' P&amp;L · ' + esc(scope()) + '</div>' + tableTools('card-cities', 'Search ' + geoWord(false)) + '</div>'
@@ -510,7 +533,7 @@ function vHealth() {
       + '<td>₹' + fmt(city.gmv) + '</td><td>' + (t ? '₹' + fmt(t.gmv) : '—') + '</td>' + diff(city.gmv, t && t.gmv)
       + '<td>₹' + fmt(city.ns) + '</td><td>' + (t ? '₹' + fmt(t.netSales) : '—') + '</td>' + diff(city.ns, t && t.netSales)
       + '<td>₹' + fmt(city.promos) + '</td><td>' + (t ? '₹' + fmt(t.promos) : '—') + '</td>' + diff(city.promos, t && t.promos)
-      + '<td>₹' + fmt(city.adsvis) + '</td></tr>';
+      + '<td>₹' + fmt(city.adsvis) + (I.est ? '<div class="lbl-sm" style="color:#9A5B00">est. ' + fmtPct(I.est.pct) + ' of NS from ' + I.est.from + '</div>' : '') + '</td></tr>';
   }).join('');
   const rates = PORTALS.map(p => { const I = INFO.portals[p] || {}, c = I.cfg || {}; return '<tr><td>' + pLabel(p) + '</td><td>' + c.commission + '%</td><td>' + c.tax + '%</td><td>' + c.directExp + '%</td><td>' + c.labour + '%</td><td>' + c.logistics + '%</td><td class="l muted">' + (I.rateSrc || '') + '</td></tr>'; }).join('');
   const unm = Object.values(INFO.unmapped).filter(u => u.sku && u.sku !== '(Promos with no sales)');
@@ -594,14 +617,15 @@ function exportWorking() {
     ws['!autofilter'] = { ref: 'A1:AH' + L };
 
     // 2. Pools: CM2 ads + visibility per portal for the month
-    const P = [['Portal','CM2 Ads','CM2 Visibility','Ads + Vis Pool','CM2 Net Sales','City files Net Sales','Diff %']];
+    const P = [['Portal','CM2 Ads','CM2 Visibility','Ads + Vis Pool','CM2 Net Sales','City files Net Sales','Diff %','Estimate % of NS','Basis']];
     PORTALS.forEach((p, i) => {
-      const t = (INFO.portals[p] || {}).cm2, r = i + 2;
-      P.push([pLabel(p), t ? t.ads : 0, t ? t.vis : 0, f('B'+r+'+C'+r), t ? t.netSales : 0,
-        f('SUMIFS(Working!$R:$R,Working!$A:$A,A'+r+')'), f('IF(E'+r+'=0,0,F'+r+'/E'+r+'-1)')]);
+      const I = INFO.portals[p] || {}, t = I.cm2, r = i + 2;
+      if (I.est) P.push([pLabel(p), 0, 0, f('F'+r+'*H'+r), 0, f('SUMIFS(Working!$R:$R,Working!$A:$A,A'+r+')'), '', I.est.pct / 100, 'Estimated: ' + I.est.from + ' Ads + Vis as % of Net Sales × this month\'s Net Sales']);
+      else P.push([pLabel(p), t ? t.ads : 0, t ? t.vis : 0, f('B'+r+'+C'+r), t ? t.netSales : 0,
+        f('SUMIFS(Working!$R:$R,Working!$A:$A,A'+r+')'), f('IF(E'+r+'=0,0,F'+r+'/E'+r+'-1)'), '', t ? 'CM2 ' + label + ' actual' : 'No CM2 data']);
     });
     const wp = XLSX.utils.aoa_to_sheet(P);
-    for (let r = 2; r <= 4; r++) { ['B','C','D','E','F'].forEach(c => { if (wp[c+r]) wp[c+r].z = '#,##0.00'; }); if (wp['G'+r]) wp['G'+r].z = '0.00%'; }
+    for (let r = 2; r <= 4; r++) { ['B','C','D','E','F'].forEach(c => { if (wp[c+r]) wp[c+r].z = '#,##0.00'; }); ['G','H'].forEach(c => { if (wp[c+r]) wp[c+r].z = '0.00%'; }); }
     wp['!cols'] = P[0].map(h => ({ wch: Math.max(14, h.length + 2) }));
 
     // 3. Summaries by City and State (SUMIFS on Working)

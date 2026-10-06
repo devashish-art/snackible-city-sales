@@ -271,7 +271,8 @@ function buildFacts() {
       if (sh > 0) { f.nlc = true; INFO.nlc[sku] = n; }
       const ns = gross / (1 + tax), c = cost(p, f.key);
       if (c === null && qty) INFO.missingCost[p + '|' + f.key] = { p, label: f.label, qty: ((INFO.missingCost[p + '|' + f.key] || {}).qty || 0) + qty };
-      Object.assign(f, { gmv, qty, gross, ns, cogs: qty * (c || 0), de: ns * de, lab: ns * lab, log: ns * lg, promos: +promos || 0 });
+      Object.assign(f, { gmv, qty, gross, ns, cogs: qty * (c || 0), de: ns * de, lab: ns * lab, log: ns * lg, promos: +promos || 0,
+        sh, nlcPrice: n ? n.price : 0, cost: c || 0 });
       out.push(f);
       (INFO.cities[f.city] = INFO.cities[f.city] || {})[p] = true;
     });
@@ -348,6 +349,7 @@ function filters(showPortal) {
     + '<select class="msel" onchange="setPeriod(this.value)">' + Object.entries(PERIODS).map(([v, l]) => '<option value="' + v + '"' + (String(ST.period) === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
     + '<select class="msel" onchange="setMonth(this.value)">' + MONTHS_AVAIL.map(m => '<option value="' + m + '"' + (m === ST.ym ? ' selected' : '') + '>' + ymLabel(m) + '</option>').join('') + '</select>'
     + '<span class="lbl-sm">Ads split</span>' + seg(ST.split, [['netSales', 'Net Sales'], ['qty', 'Qty']], 'setSplit')
+    + '<button class="btn" onclick="exportWorking()" title="Excel with live formulas for the whole month">📥 Export working</button>'
     + '<button class="btn" onclick="refresh()" title="Reload data from sheets">↻</button></div>';
 }
 function scope() { return (ST.portal === 'all' ? 'All portals' : pLabel(ST.portal)) + ' · ' + (ST.ym ? ymLabel(ST.ym) : '') + ' · ' + PERIODS[ST.period]; }
@@ -529,6 +531,110 @@ function vHealth() {
     + '<div class="twrap" style="max-height:300px"><table class="tbl hgrid"><thead><tr><th>City</th><th class="l">State</th>' + PORTALS.map(p => '<th>' + pLabel(p) + '</th>').join('') + '</tr></thead><tbody>'
     + cityRows.map(([c, ps]) => '<tr><td>' + esc(c) + '</td><td class="l ' + (stateOf(c) === 'Unmapped state' ? 'neg' : 'muted') + '">' + esc(stateOf(c)) + '</td>' + PORTALS.map(p => '<td>' + (ps[p] ? '✓' : '<span class="muted">—</span>') + '</td>').join('') + '</tr>').join('') + '</tbody></table></div></div>'
     + ((INFO.backendWarnings || []).length || ((DATA[ST.ym] || {}).warnings || []).length ? '<div class="card"><div class="thead-row"><div class="thead-title">Sheet warnings</div></div><div class="warn-bar">' + [...(INFO.backendWarnings || []), ...((DATA[ST.ym] || {}).warnings || [])].map(esc).join('<br>') + '</div></div>' : '');
+}
+
+// ── Excel export with live formulas (whole month, all portals) ──
+function exportWorking() {
+  if (!FACTS.length) { toast('Nothing to export', 'err'); return; }
+  const run = () => {
+    const f = x => ({ t:'n', f:x });
+    const label = ymLabel(ST.ym), byQty = ST.split === 'qty';
+    // 1. Aggregate facts to portal · city · SKU · period
+    const agg = {};
+    FACTS.forEach(x => {
+      const k = [x.p, x.city, x.key, x.b].join('¦');
+      const a = agg[k] = agg[k] || { p:x.p, city:x.city, state:x.state, label:x.label, b:x.b, qty:0, gmv:0, promos:0, nlcQty:0, cogs:0, price:0 };
+      a.qty += x.qty || 0; a.gmv += x.gmv || 0; a.promos += x.promos || 0; a.cogs += x.cogs || 0;
+      a.nlcQty += (x.qty || 0) * (x.sh || 0); if (x.nlcPrice) a.price = x.nlcPrice;
+    });
+    const rows = Object.values(agg).sort((a, b) => a.p.localeCompare(b.p) || a.city.localeCompare(b.city) || a.label.localeCompare(b.label) || a.b - b.b);
+    const n = rows.length, L = n + 1;
+    const H = ['Portal','City','State','Period','SKU','Qty','GMV','Cost / Unit','NLC Share','NLC Price','Commission %','GST %','Direct Exp %','Labour %','Logistics %',
+      'Gross Sales','Commission','Net Sales','GST','COGS','Direct Exp','Gross Margin','Labour','Logistics','CM1','Promos',
+      'Split Basis (' + (byQty ? 'Qty' : 'Net Sales') + ')','Portal Basis Total','Share of Portal','Ads + Vis Pool','Ads + Vis','CM2','CM1 % NS','CM2 % NS'];
+    const W = [H];
+    rows.forEach((a, i) => {
+      const r = i + 2, cfg = (INFO.portals[a.p] || {}).cfg || DEFAULT_CFG;
+      W.push([pLabel(a.p), a.city, a.state, PERIODS[a.b], a.label, a.qty, a.gmv, a.qty ? a.cogs / a.qty : 0, a.qty ? a.nlcQty / a.qty : 0, a.price || 0,
+        (+cfg.commission || 0) / 100, (+cfg.tax || 0) / 100, (+cfg.directExp || 0) / 100, (+cfg.labour || 0) / 100, (+cfg.logistics || 0) / 100,
+        f('F'+r+'*I'+r+'*J'+r+'+G'+r+'*(1-I'+r+')*(1-K'+r+')'),
+        f('G'+r+'*(1-I'+r+')*K'+r),
+        f('P'+r+'/(1+L'+r+')'),
+        f('P'+r+'-R'+r),
+        f('F'+r+'*H'+r),
+        f('R'+r+'*M'+r),
+        f('R'+r+'-T'+r+'-U'+r),
+        f('R'+r+'*N'+r),
+        f('R'+r+'*O'+r),
+        f('V'+r+'-W'+r+'-X'+r),
+        a.promos,
+        f(byQty ? 'F'+r : 'R'+r),
+        f('SUMIFS($AA$2:$AA$'+L+',$A$2:$A$'+L+',A'+r+')'),
+        f('IF(AB'+r+'=0,0,AA'+r+'/AB'+r+')'),
+        f('SUMIFS(Pools!$D:$D,Pools!$A:$A,A'+r+')'),
+        f('AD'+r+'*AC'+r),
+        f('Y'+r+'-Z'+r+'-AE'+r),
+        f('IF(R'+r+'=0,0,Y'+r+'/R'+r+')'),
+        f('IF(R'+r+'=0,0,AF'+r+'/R'+r+')')]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(W);
+    const money = ['G','H','J','P','Q','R','S','T','U','V','W','X','Y','Z','AA','AB','AD','AE','AF'], pcts = ['I','K','L','M','N','O','AC','AG','AH'];
+    for (let r = 2; r <= L; r++) { money.forEach(c => { if (ws[c+r]) ws[c+r].z = '#,##0.00'; }); pcts.forEach(c => { if (ws[c+r]) ws[c+r].z = '0.00%'; }); }
+    ws['!cols'] = H.map((h, i) => ({ wch: i === 4 ? 42 : i === 1 ? 18 : Math.max(11, h.length + 2) }));
+    ws['!autofilter'] = { ref: 'A1:AH' + L };
+
+    // 2. Pools: CM2 ads + visibility per portal for the month
+    const P = [['Portal','CM2 Ads','CM2 Visibility','Ads + Vis Pool','CM2 Net Sales','City files Net Sales','Diff %']];
+    PORTALS.forEach((p, i) => {
+      const t = (INFO.portals[p] || {}).cm2, r = i + 2;
+      P.push([pLabel(p), t ? t.ads : 0, t ? t.vis : 0, f('B'+r+'+C'+r), t ? t.netSales : 0,
+        f('SUMIFS(Working!$R:$R,Working!$A:$A,A'+r+')'), f('IF(E'+r+'=0,0,F'+r+'/E'+r+'-1)')]);
+    });
+    const wp = XLSX.utils.aoa_to_sheet(P);
+    for (let r = 2; r <= 4; r++) { ['B','C','D','E','F'].forEach(c => { if (wp[c+r]) wp[c+r].z = '#,##0.00'; }); if (wp['G'+r]) wp['G'+r].z = '0.00%'; }
+    wp['!cols'] = P[0].map(h => ({ wch: Math.max(14, h.length + 2) }));
+
+    // 3. Summaries by City and State (SUMIFS on Working)
+    const summary = (col, name) => {
+      const keys = [...new Set(rows.map(a => name === 'City' ? a.city : a.state))].sort();
+      const SH = [name,'Qty','GMV','Net Sales','Gross Margin','CM1','Promos','Ads + Vis','CM2','Share of NS','CM1 % NS','Promo % GMV','CM2 % NS'];
+      const out = [SH], last = keys.length + 1, tr = last + 1;
+      const sm = (c, r) => f('SUMIFS(Working!$' + c + '$2:$' + c + '$' + L + ',Working!$' + col + '$2:$' + col + '$' + L + ',$A' + r + ')');
+      keys.forEach((k, i) => { const r = i + 2;
+        out.push([k, sm('F', r), sm('G', r), sm('R', r), sm('V', r), sm('Y', r), sm('Z', r), sm('AE', r), sm('AF', r),
+          f('IF($D$'+tr+'=0,0,D'+r+'/$D$'+tr+')'), f('IF(D'+r+'=0,0,F'+r+'/D'+r+')'), f('IF(C'+r+'=0,0,G'+r+'/C'+r+')'), f('IF(D'+r+'=0,0,I'+r+'/D'+r+')')]); });
+      out.push(['Total', ...['B','C','D','E','F','G','H','I'].map(c => f('SUM(' + c + '2:' + c + last + ')')),
+        f('IF(D'+tr+'=0,0,D'+tr+'/D'+tr+')'), f('IF(D'+tr+'=0,0,F'+tr+'/D'+tr+')'), f('IF(C'+tr+'=0,0,G'+tr+'/C'+tr+')'), f('IF(D'+tr+'=0,0,I'+tr+'/D'+tr+')')]);
+      const w = XLSX.utils.aoa_to_sheet(out);
+      for (let r = 2; r <= tr; r++) { ['B','C','D','E','F','G','H','I'].forEach(c => { if (w[c+r]) w[c+r].z = '#,##0'; }); ['J','K','L','M'].forEach(c => { if (w[c+r]) w[c+r].z = '0.00%'; }); }
+      w['!cols'] = SH.map((h, i) => ({ wch: i === 0 ? 22 : 14 }));
+      return w;
+    };
+
+    // 4. Notes
+    const notes = [['How this file works · ' + label],
+      ['Working: one row per Portal · City · SKU · Period. Inputs: Qty, GMV, Cost/Unit, NLC Share, NLC Price, rates, Promos. Everything else is a live formula.'],
+      ['Gross Sales = Qty × NLC Share × NLC Price  +  GMV × (1 − NLC Share) × (1 − Commission %). Blinkit and Zepto have NLC Share 0.'],
+      ['NLC Share (Instamart): NLC qty ÷ total qty for that product in the CM2 dashboard this month. 100% if listed in Swiggy_NLC_Prices but not in CM2.'],
+      ['Net Sales = Gross Sales ÷ (1 + GST %). Direct Exp, Labour, Logistics = % × Net Sales. Gross Margin = Net Sales − COGS − Direct Exp. CM1 = Gross Margin − Labour − Logistics.'],
+      ['Cost / Unit: from the CM2 dashboard for the same month (latest earlier month if missing).'],
+      ['Promos: straight from the city promo files. Promo rows without a SKU are spread over that city\'s SKUs in the same period by Net Sales.'],
+      ['Ads + Vis: CM2 portal total for the month (Pools sheet) × the row\'s share of that portal\'s ' + (byQty ? 'Qty' : 'Net Sales') + '. CM2 = CM1 − Promos − Ads + Vis.'],
+      ['Periods: 1st–10th, 11th–20th, 21st–month end, matching Zepto promo windows. Filter Working by Period to see one window.'],
+      ['City / State sheets: SUMIFS on Working. Pools also compares city-file Net Sales with CM2 Net Sales per portal.']];
+    const wn = XLSX.utils.aoa_to_sheet(notes); wn['!cols'] = [{ wch: 150 }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, summary('B', 'City'), 'By City');
+    XLSX.utils.book_append_sheet(wb, summary('C', 'State'), 'By State');
+    XLSX.utils.book_append_sheet(wb, ws, 'Working');
+    XLSX.utils.book_append_sheet(wb, wp, 'Pools');
+    XLSX.utils.book_append_sheet(wb, wn, 'Notes');
+    XLSX.writeFile(wb, 'Snackible_City_Sales_' + label.replace(/ /g, '_') + '.xlsx');
+    toast('Exported ' + n + ' rows');
+  };
+  if (typeof XLSX !== 'undefined') run();
+  else { const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; sc.onload = run; sc.onerror = () => toast('Could not load Excel library', 'err'); document.head.appendChild(sc); }
 }
 
 // ── Render & events ───────────────────────────────────

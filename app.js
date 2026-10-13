@@ -189,7 +189,16 @@ async function loadMonth(ym, nocache) {
 }
 
 // ── Build facts: one row per portal · city · SKU · period ──
-function cm2Entry(p, label) { const e = (CM2.data || {})[p + '_' + label]; return e && typeof e === 'object' ? e : null; }
+// CM2 keys look like "blinkit_September 2026"; also accept "Sep 2026", "swiggy_…" etc.
+const cm2Norm = l => { const s = String(l || '').toLowerCase(), y = (s.match(/\d{4}/) || [])[0], mi = MONTH_NAMES.findIndex(m => s.includes(m.slice(0, 3).toLowerCase())); return y && mi >= 0 ? y + '-' + ('0' + (mi + 1)).slice(-2) : ''; };
+const cm2P = k => { const p = String(k).split('_')[0].toLowerCase(); return p === 'swiggy' ? 'instamart' : p; };
+function cm2Entry(p, label) {
+  const D = CM2.data || {}, ex = D[p + '_' + label]; if (ex && typeof ex === 'object') return ex;
+  const want = cm2Norm(label); if (!want) return null;
+  const k = Object.keys(D).find(k => cm2P(k) === p && D[k] && typeof D[k] === 'object' && cm2Norm(String(k).split('_').slice(1).join('_')) === want);
+  return k ? D[k] : null;
+}
+function cm2Months(p) { return Object.keys(CM2.data || {}).filter(k => cm2P(k) === p && CM2.data[k] && typeof CM2.data[k] === 'object').map(k => String(k).split('_').slice(1).join('_')); }
 function latestCM2Before(p, label) {
   const ord = l => { const [m, y] = String(l || '').split(' '); const mi = MONTH_NAMES.indexOf(m); return mi < 0 || !+y ? -1 : (+y) * 12 + mi; };
   const target = ord(label); let best = null, bestO = -1;
@@ -853,10 +862,12 @@ function computeUpload() {
   UP.res = { list, skipped, zero, bad };
 }
 
-function cm2Ref(p, t, ym) {
-  const e = cm2Entry(p, ymLabel(ym)); if (!e) return null;
+function cm2Ref(p, ym) {
+  if (!CM2_OK) return { why: 'CM2 dashboard data did not load. Click ↻ and try again.' };
+  const e = cm2Entry(p, ymLabel(ym));
+  if (!e) { const have = cm2Months(p); return { why: ymLabel(ym) + ' not saved in CM2 for ' + pLabel(p) + (have.length ? '. CM2 has: ' + have.join(', ') : '') }; }
   const tt = totals(e.skus, e.nlcSkus, e.config || DEFAULT_CFG, e.portalTotals || {}, e.nlcTotals || {});
-  return t === 'sales' ? tt.gmv : tt.promos;
+  return { gmv: tt.gmv, promos: tt.promos };
 }
 function statusOf(ym, p, t) { return STATUS.find(s => s.ym === ym && s.portal === p && s.type === t) || null; }
 const dayRange = (a, b) => a ? +String(a).slice(8, 10) + '–' + +String(b).slice(8, 10) : '';
@@ -896,25 +907,28 @@ function vUpload() {
     + '</tbody></table></div></div>';
 
   if (!R || R.miss) return h + '<div class="card"><div class="warn-bar" style="margin:14px 18px">Pick a column for: ' + ((R && R.miss) || []).map(f => FIELD_LBL[f]).join(', ') + '</div></div>';
-  const valH = isS ? 'GMV' : 'Promos';
+  // What gets checked against CM2: GMV for sales, promos for promo files, both for Blinkit (brand fund sits in the sales file)
+  const checks = isS ? [['GMV', 'gmv']].concat(T.p === 'blinkit' ? [['Promos', 'promos']] : []) : [['Promos', 'promos']];
+  const cmp = (mine, ref) => ref == null ? '<td class="muted">—</td><td class="muted">—</td>'
+    : '<td>₹' + fmt(ref) + '</td><td class="' + (Math.abs(pct(mine - ref, ref)) <= 1 ? 'pos' : 'neg') + '"><b>' + (ref ? fmtPct(pct(mine - ref, ref)) : '—') + '</b></td>';
   const rows = R.list.map(M => {
-    const ref = CM2_OK ? cm2Ref(T.p, T.t, M.ym) : null, val = isS ? M.gmv : M.promos, ex = statusOf(M.ym, T.p, T.t);
+    const ref = cm2Ref(T.p, M.ym), ex = statusOf(M.ym, T.p, T.t);
     const partial = +M.from.slice(8) > 1 || +M.to.slice(8) < daysIn(M.ym), notes = [];
     if (partial) notes.push('<span class="neg">Partial month. Saving replaces all ' + T.label + ' for ' + ymLabel(M.ym) + '</span>');
     if (ex) notes.push('Replaces saved ' + fmtL(isS ? ex.gmv : ex.promos) + ' (' + esc(ex.at) + ')');
+    if (ref.why) notes.push('<span style="color:#9A5B00">' + esc(ref.why) + '</span>');
     return '<tr><td><label style="cursor:pointer"><input type="checkbox"' + (UP.sel[M.ym] ? ' checked' : '') + ' onchange="UP.sel[\'' + M.ym + '\']=this.checked;render()"> ' + ymLabel(M.ym) + '</label></td>'
       + '<td>' + dayRange(M.from, M.to) + '</td><td>' + fmt(M.raw) + '</td><td><b>' + fmt(M.out.length) + '</b></td><td>' + M.cities.size + '</td><td>' + M.skus.size + '</td>'
-      + (isS ? '<td>' + fmt(M.qty) + '</td>' : '') + '<td><b>₹' + fmt(val) + '</b></td>' + (T.p === 'blinkit' && isS ? '<td>₹' + fmt(M.promos) + '</td>' : '')
-      + '<td>' + (ref ? '₹' + fmt(ref) : '<span class="muted">not in CM2</span>') + '</td>'
-      + (ref ? '<td class="' + (Math.abs(pct(val - ref, ref)) <= 1 ? 'pos' : 'neg') + '"><b>' + fmtPct(pct(val - ref, ref)) + '</b></td>' : '<td class="muted">—</td>')
+      + (isS ? '<td>' + fmt(M.qty) + '</td>' : '')
+      + checks.map(([, k]) => '<td><b>₹' + fmt(M[k]) + '</b></td>' + cmp(M[k], ref.why ? null : ref[k])).join('')
       + '<td class="l lbl-sm">' + notes.join('<br>') + '</td></tr>';
   }).join('');
   const selN = R.list.filter(M => UP.sel[M.ym]).length;
   h += '<div class="card mb20"><div class="thead-row"><div class="thead-title">3 · Check against CM2 and save</div><div class="lbl-sm">Diff within ±1% shows green</div></div>'
     + (R.skipped ? '<div class="warn-bar">' + fmt(R.skipped) + ' rows skipped, no readable date (usually total rows): ' + esc(R.bad.join(', ')) + '</div>' : '')
     + '<div class="twrap" style="max-height:none"><table class="tbl hgrid"><thead><tr><th>Month</th><th>Days</th><th>File rows</th><th>Saved rows</th><th>Cities</th><th>SKUs</th>'
-    + (isS ? '<th>Qty</th>' : '') + '<th>' + valH + '</th>' + (T.p === 'blinkit' && isS ? '<th>Brand fund</th>' : '') + '<th>CM2 ' + valH + '</th><th>Diff</th><th class="l">Note</th></tr></thead><tbody>'
-    + (rows || '<tr><td colspan="12" class="empty">No usable rows</td></tr>') + '</tbody></table></div>'
+    + (isS ? '<th>Qty</th>' : '') + checks.map(([l]) => '<th>' + l + '</th><th>CM2 ' + l + '</th><th>' + l + ' diff</th>').join('') + '<th class="l">Note</th></tr></thead><tbody>'
+    + (rows || '<tr><td colspan="14" class="empty">No usable rows</td></tr>') + '</tbody></table></div>'
     + '<div style="padding:14px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><button class="btn primary"' + (UP.saving || !selN ? ' disabled' : '') + ' onclick="saveUpload()">'
     + (UP.saving ? 'Saving…' : 'Save ' + selN + ' month' + (selN === 1 ? '' : 's') + ' of ' + T.label) + '</button><span class="lbl-sm">' + esc(UP.msg) + '</span></div></div>';
   return h;

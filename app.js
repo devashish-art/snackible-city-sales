@@ -1,6 +1,7 @@
 /* ═══════════════════════════════════════════════════
    Snackible · City Sales Dashboard · app.js
-   Data: City Sales backend (pivot pastes) + CM2 backend (rates, cost, ads/vis, SKU_Map)
+   Data: City Sales backend (raw exports uploaded here, stored as Month · Period · City · SKU)
+         + CM2 backend (rates, cost, ads/vis, SKU_Map)
    ═══════════════════════════════════════════════════ */
 
 // ── Settings ──────────────────────────────────────────
@@ -16,7 +17,7 @@ const PERIODS = { all:'Full month', 1:'1st – 10th', 2:'11th – 20th', 3:'21st
 
 const ST = { geo:'city', view:'overview', ym:null, period:'all', portal:'all', split:'netSales', city:null,
              metric:'ns', open:{}, sideCollapsed:false, loading:false };
-let MONTHS_AVAIL = [], DATA = {}, CM2 = { config:{}, data:{} }, CM2_OK = false;
+let MONTHS_AVAIL = [], STATUS = [], DATA = {}, CM2 = { config:{}, data:{} }, CM2_OK = false;
 let MAP = null, MAP_OK = false, FACTS = [], INFO = {}, CHARTS = [], LOAD_ERR = '';
 
 // ── Helpers ───────────────────────────────────────────
@@ -173,9 +174,10 @@ async function loadMap() {
   Object.keys(ID_CACHE).forEach(k => delete ID_CACHE[k]);
 }
 async function loadMonths() {
-  if (DEMO) { MONTHS_AVAIL = ['2026-08', '2026-09']; return; }
+  if (DEMO) { MONTHS_AVAIL = ['2026-08', '2026-09']; STATUS = []; return; }
   const r = await getJSON(CITY_API + '?action=months');
-  MONTHS_AVAIL = r.months || []; INFO.backendWarnings = r.warnings || [];
+  if (r.error) throw new Error(r.error);
+  MONTHS_AVAIL = r.months || []; STATUS = r.index || []; INFO.backendWarnings = r.warnings || [];
 }
 async function loadMonth(ym, nocache) {
   if (DATA[ym] && !nocache) return;
@@ -381,6 +383,7 @@ function sidebar() {
   return '<div class="sidebar' + (ST.sideCollapsed ? ' collapsed' : '') + '"><div class="sb-logo"><div class="sb-lbl"><div class="logo-brand">Snackible</div><div class="logo-sub">QCom City Sales</div></div>'
     + '<button class="sb-toggle" onclick="ST.sideCollapsed=!ST.sideCollapsed;render()">' + (ST.sideCollapsed ? '»' : '«') + '</button></div>'
     + '<div class="sec-label">Views</div>' + nv('overview', '🏙️', 'City Overview') + nv('city', '📍', 'City Detail') + nv('matrix', '🧩', 'SKU × City') + nv('health', '🩺', 'Data Health')
+    + '<div class="sec-label">Data</div>' + nv('upload', '⬆️', 'Upload Data')
     + '<div class="sec-label">Links</div><a class="nav-item" href="' + CM2_URL + '" title="CM2 Dashboard"><span class="nav-icon">📊</span><span class="sb-lbl">CM2 Dashboard ↗</span></a>'
     + (DEMO ? '<div class="sec-label">Mode</div><div class="nav-item" style="cursor:default;color:var(--yellow)"><span class="nav-icon">🧪</span><span class="sb-lbl">Demo data</span></div>' : '')
     + '</div>';
@@ -678,15 +681,284 @@ function exportWorking() {
     XLSX.writeFile(wb, 'Snackible_City_Sales_' + label.replace(/ /g, '_') + '.xlsx');
     toast('Exported ' + n + ' rows');
   };
-  if (typeof XLSX !== 'undefined') run();
-  else { const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; sc.onload = run; sc.onerror = () => toast('Could not load Excel library', 'err'); document.head.appendChild(sc); }
+  loadXLSX().then(run).catch(e => toast(e.message, 'err'));
+}
+
+// ── Upload raw portal exports ─────────────────────────
+// File is read in the browser, rolled up to Month · Period · City · SKU, then saved.
+// Saving a month replaces that Portal · Type for that month, so re-uploading never doubles data.
+let XLSX_P = null;
+function loadXLSX() {
+  if (typeof XLSX !== 'undefined') return Promise.resolve();
+  return XLSX_P = XLSX_P || new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    sc.onload = res; sc.onerror = () => { XLSX_P = null; rej(new Error('Could not load Excel library')); }; document.head.appendChild(sc);
+  });
+}
+const UP_TYPES = {
+  'blinkit|sales':    { p:'blinkit',   t:'sales',  label:'Blinkit Sales',    fields:['date','city','sku','qty','gmv','promo'], req:['date','city','sku','qty','gmv'] },
+  'zepto|sales':      { p:'zepto',     t:'sales',  label:'Zepto Sales',      fields:['date','city','sku','qty','gmv'],         req:['date','city','sku','qty','gmv'] },
+  'zepto|promos':     { p:'zepto',     t:'promos', label:'Zepto Promos',     fields:['date','dateTo','city','sku','promo'],    req:['date','city','promo'] },
+  'instamart|sales':  { p:'instamart', t:'sales',  label:'Instamart Sales',  fields:['date','city','sku','qty','gmv'],         req:['date','city','sku','qty','gmv'] },
+  'instamart|promos': { p:'instamart', t:'promos', label:'Instamart Promos', fields:['date','dateTo','city','sku','promo'],    req:['date','city','promo'] },
+};
+const FIELD_LBL = { date:'Date', dateTo:'To date (ranges only)', city:'City', sku:'SKU / product name', qty:'Quantity sold', gmv:'GMV (MRP value)', promo:'Promo ₹ / brand fund' };
+const KW = {
+  date:   ['order date','start date','from date','date','order day','day','created at','created'],
+  dateTo: ['end date','to date','till date','valid till','end'],
+  city:   ['city name','city','delivery city','customer city'],
+  sku:    ['product name','item name','sku name','product title','product','item','sku','title','name'],
+  qty:    ['qty sold','quantity sold','units sold','quantity','qty','units','sold'],
+  gmv:    ['mrp gmv','gmv','gross merchandise value','mrp value','sales mrp','gross sales','sales value','sales','revenue','mrp'],
+  promo:  ['total brand fund','brand fund','promo amount','promo','discount','burn','funding','spend','amount'],
+};
+const UP = { type:'blinkit|sales', name:'', sheet:'', hdr:0, heads:[], rows:[], map:{}, res:null, sel:{}, saving:false, msg:'' };
+const KINDS = [['blinkit','sales','Blinkit Sales'], ['zepto','sales','Zepto Sales'], ['zepto','promos','Zepto Promos'], ['instamart','sales','Instamart Sales'], ['instamart','promos','Instamart Promos']];
+
+const normH = s => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function scoreH(h, f) {
+  if (!h) return 0;
+  if (f === 'date' && /\b(end|till|to date)\b/.test(h)) return 0;
+  if ((f === 'qty' || f === 'gmv') && /\bid\b/.test(h)) return 0;
+  let best = 0;
+  KW[f].forEach((k, i) => { if (h === k) best = Math.max(best, 200 - i); else if ((' ' + h + ' ').includes(' ' + k + ' ')) best = Math.max(best, 100 - i); });
+  return best;
+}
+function findHeader(rows) {
+  let best = 0, bi = 0;
+  rows.slice(0, 30).forEach((r, i) => {
+    let s = 0;
+    (r || []).forEach(c => { const h = normH(c); if (h && h.length <= 60 && Object.keys(KW).some(f => scoreH(h, f) > 0)) s++; });
+    if (s > best) { best = s; bi = i; }
+  });
+  return bi;
+}
+function autoMap() {
+  const T = UP_TYPES[UP.type], heads = UP.heads.map(normH), used = new Set(), map = {};
+  let saved = null; try { saved = JSON.parse(localStorage.getItem('cs_map_' + UP.type) || 'null'); } catch (e) {}
+  ['date','dateTo','city','qty','gmv','promo','sku'].filter(f => T.fields.includes(f)).forEach(f => {
+    if (saved && f in saved) {
+      if (saved[f] === '' && !T.req.includes(f)) { map[f] = -1; return; }
+      const i = UP.heads.indexOf(saved[f]); if (i >= 0 && !used.has(i)) { map[f] = i; used.add(i); return; }
+    }
+    let bi = -1, bs = 0;
+    heads.forEach((h, i) => { if (used.has(i)) return; const s = scoreH(h, f); if (s > bs) { bs = s; bi = i; } });
+    map[f] = bi; if (bi >= 0) used.add(bi);
+  });
+  UP.map = map;
+}
+
+// Dates: ISO, DD-MM-YYYY (or MM-DD if the column proves it), Excel serials, "01-Sep-2026"
+const MON3 = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+function dmyOrder(vals) {
+  let d = 0, m = 0;
+  for (let i = 0; i < vals.length && i < 20000; i++) {
+    const x = String(vals[i] == null ? '' : vals[i]).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+    if (!x) continue; if (+x[1] > 12) d++; if (+x[2] > 12) m++;
+  }
+  return m > d ? 'mdy' : 'dmy';
+}
+function toISO(v, ord) {
+  if (v == null || v === '') return null;
+  let y, m, d;
+  if (typeof v === 'number') { if (v < 20000 || v > 80000) return null; const p = XLSX.SSF.parse_date_code(v); y = p.y; m = p.m; d = p.d; }
+  else if (v instanceof Date) { if (isNaN(v)) return null; y = v.getFullYear(); m = v.getMonth() + 1; d = v.getDate(); }
+  else {
+    const s = String(v).trim(); let x;
+    if ((x = s.match(/^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/))) { y = +x[1]; m = +x[2]; d = +x[3]; }
+    else if ((x = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/))) { y = +x[3]; if (ord === 'mdy') { m = +x[1]; d = +x[2]; } else { d = +x[1]; m = +x[2]; } }
+    else if (/^\d{5}(\.\d+)?$/.test(s)) return toISO(+s, ord);
+    else {
+      const mm = s.toLowerCase().match(/[a-z]{3,}/), yy = s.match(/\b(\d{4})\b/), dd = s.replace(/\b\d{4}\b/, '').match(/\b(\d{1,2})\b/);
+      if (!mm || !yy || !dd) return null;
+      const mi = MON3.indexOf(mm[0].slice(0, 3)); if (mi < 0) return null;
+      y = +yy[1]; m = mi + 1; d = +dd[1];
+    }
+  }
+  if (y < 100) y += 2000;
+  if (!(y >= 2000 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+  return y + '-' + ('0' + m).slice(-2) + '-' + ('0' + d).slice(-2);
+}
+function num(v) {
+  if (typeof v === 'number') return isFinite(v) ? v : 0;
+  let s = String(v == null ? '' : v).trim(); if (!s) return 0;
+  const neg = /^\(.*\)$/.test(s); s = s.replace(/[^0-9.\-]/g, '');
+  const n = parseFloat(s) || 0; return neg ? -Math.abs(n) : n;
+}
+function dayList(a, b) {
+  const u = s => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)), out = [];
+  for (let t = u(a), e = u(b); t <= e && out.length < 400; t += 864e5) out.push(new Date(t).toISOString().slice(0, 10));
+  return out;
+}
+
+async function pickFile(file) {
+  if (!file) return;
+  toast('Reading ' + file.name + '…');
+  try {
+    await loadXLSX();
+    const buf = await file.arrayBuffer(), isCsv = /\.(csv|txt)$/i.test(file.name);
+    const wb = XLSX.read(buf, { type:'array', raw: isCsv, cellDates:false });
+    let best = null;
+    wb.SheetNames.forEach(n => { const a = XLSX.utils.sheet_to_json(wb.Sheets[n], { header:1, raw:true, defval:'', blankrows:false }); if (!best || a.length > best.a.length) best = { n, a }; });
+    if (!best || !best.a.length) throw new Error('File is empty');
+    const hdr = findHeader(best.a);
+    Object.assign(UP, { name:file.name, sheet: wb.SheetNames.length > 1 ? best.n : '', hdr, heads:(best.a[hdr] || []).map(h => String(h).trim()), rows:best.a.slice(hdr + 1), sel:{}, msg:'' });
+    autoMap(); computeUpload(); render();
+  } catch (e) { toast('Could not read file: ' + e.message, 'err'); }
+}
+
+function computeUpload() {
+  const T = UP_TYPES[UP.type], m = UP.map, miss = T.req.filter(f => !(m[f] >= 0));
+  if (miss.length) { UP.res = { miss }; return; }
+  const col = i => UP.rows.map(r => r[i]);
+  const o1 = dmyOrder(col(m.date)), o2 = m.dateTo >= 0 ? dmyOrder(col(m.dateTo)) : o1;
+  const months = {}, bad = []; let skipped = 0, zero = 0;
+  const put = (iso, city, sku, qty, gmv, pr, countRaw) => {
+    const ym = iso.slice(0, 7), M = months[ym] = months[ym] || { ym, agg:{}, from:iso, to:iso, raw:0, qty:0, gmv:0, promos:0, cities:new Set(), skus:new Set() };
+    const b = bucketOf(iso), k = b + '\u0001' + city + '\u0001' + sku;
+    const a = M.agg[k] = M.agg[k] || { b, city, sku, qty:0, gmv:0, promos:0 };
+    a.qty += qty; a.gmv += gmv; a.promos += pr; M.qty += qty; M.gmv += gmv; M.promos += pr;
+    if (iso < M.from) M.from = iso; if (iso > M.to) M.to = iso; if (countRaw) M.raw++;
+    M.cities.add(city); if (sku) M.skus.add(sku);
+  };
+  UP.rows.forEach((r, i) => {
+    if (!r || !r.some(c => c !== '' && c != null)) return;
+    const d1 = toISO(r[m.date], o1);
+    if (!d1) { skipped++; if (bad.length < 3) bad.push('row ' + (UP.hdr + i + 2) + ' "' + String(r[m.date]).slice(0, 25) + '"'); return; }
+    const city = String(r[m.city] == null ? '' : r[m.city]).trim() || 'Unknown';
+    const sku = m.sku >= 0 ? String(r[m.sku] == null ? '' : r[m.sku]).trim() : '';
+    if (T.t === 'sales') {
+      const qty = num(r[m.qty]), gmv = num(r[m.gmv]), pr = m.promo >= 0 ? num(r[m.promo]) : 0;
+      if (!qty && !gmv && !pr) { zero++; return; }
+      put(d1, city, sku, qty, gmv, pr, true);
+    } else {
+      const amt = num(r[m.promo]); if (!amt) { zero++; return; }
+      const d2 = m.dateTo >= 0 ? toISO(r[m.dateTo], o2) : null;
+      if (d2 && d2 > d1) { const days = dayList(d1, d2); days.forEach((dd, j) => put(dd, city, sku, 0, 0, amt / days.length, j === 0)); }
+      else put(d1, city, sku, 0, 0, amt, true);
+    }
+  });
+  const list = Object.values(months).sort((a, b) => a.ym.localeCompare(b.ym));
+  list.forEach(M => { M.out = Object.values(M.agg); if (UP.sel[M.ym] === undefined) UP.sel[M.ym] = true; });
+  UP.res = { list, skipped, zero, bad };
+}
+
+function cm2Ref(p, t, ym) {
+  const e = cm2Entry(p, ymLabel(ym)); if (!e) return null;
+  const tt = totals(e.skus, e.nlcSkus, e.config || DEFAULT_CFG, e.portalTotals || {}, e.nlcTotals || {});
+  return t === 'sales' ? tt.gmv : tt.promos;
+}
+function statusOf(ym, p, t) { return STATUS.find(s => s.ym === ym && s.portal === p && s.type === t) || null; }
+const dayRange = (a, b) => a ? +String(a).slice(8, 10) + '–' + +String(b).slice(8, 10) : '';
+
+function statusCard() {
+  const yms = [...new Set([...MONTHS_AVAIL, ...STATUS.map(s => s.ym)])].filter(Boolean).sort().reverse();
+  const cell = (ym, p, t) => {
+    const s = statusOf(ym, p, t); if (!s) return '<td class="neg">Missing</td>';
+    const full = +String(s.from).slice(8, 10) === 1 && +String(s.to).slice(8, 10) === daysIn(ym);
+    return '<td title="' + esc((s.file || '') + ' · ' + (s.at || '') + ' · ' + fmt(s.rows) + ' rows') + '">' + fmtL(t === 'sales' ? s.gmv : s.promos)
+      + '<div class="lbl-sm"><span class="' + (full ? '' : 'neg') + '">days ' + dayRange(s.from, s.to) + '</span> · <a href="#" style="color:var(--neg)" onclick="clearUpload(\'' + ym + '\',\'' + p + '\',\'' + t + '\');return false">clear</a></div></td>';
+  };
+  return '<div class="card mb20"><div class="thead-row"><div class="thead-title">Saved in sheet</div><div class="lbl-sm">Sales cells show GMV, promo cells show promos. Hover for file and time. Red days = partial month.</div></div>'
+    + (yms.length ? '<div class="twrap" style="max-height:340px"><table class="tbl hgrid"><thead><tr><th>Month</th>' + KINDS.map(k => '<th>' + k[2] + '</th>').join('') + '</tr></thead><tbody>'
+      + yms.map(ym => '<tr><td>' + ymLabel(ym) + '</td>' + KINDS.map(k => cell(ym, k[0], k[1])).join('') + '</tr>').join('') + '</tbody></table></div>'
+      : '<div class="empty">Nothing saved yet. Upload your first file below.</div>') + '</div>';
+}
+
+function vUpload() {
+  const T = UP_TYPES[UP.type], R = UP.res, isS = T.t === 'sales';
+  const typeSeg = '<div class="seg">' + Object.entries(UP_TYPES).map(([k, v]) => '<button class="' + (UP.type === k ? 'on' : '') + '" onclick="setUpType(\'' + k + '\')">' + v.label + '</button>').join('') + '</div>';
+  let h = '<div class="ph"><div><div class="ph-title">Upload Data</div><div class="ph-sub">Raw portal export in · one row per Month · Period · City · SKU saved</div></div><div class="ph-right"><button class="btn" onclick="refresh()" title="Reload from sheets">↻</button></div></div>'
+    + statusCard()
+    + '<div class="card mb20"><div class="thead-row"><div class="thead-title">1 · File type and file</div>' + typeSeg + '</div>'
+    + '<div class="note">' + (isS ? 'Order or day level export with date, city, product, qty and GMV' + (T.p === 'blinkit' ? '. Brand fund column becomes promos' : '')
+        : 'Promo export with date (or from and to date), city, product (optional) and amount. Ranges are split by day into 1–10, 11–20, 21–end') + '. CSV or Excel, any size.</div>'
+    + '<div style="padding:0 18px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><input type="file" accept=".csv,.xlsx,.xls,.txt" onchange="pickFile(this.files[0])">'
+    + (UP.name ? '<span class="lbl-sm">' + esc(UP.name) + (UP.sheet ? ' · sheet ' + esc(UP.sheet) : '') + ' · ' + fmt(UP.rows.length) + ' rows · header row ' + (UP.hdr + 1) + '</span>' : '') + '</div></div>';
+  if (!UP.rows.length) return h;
+
+  const opts = sel => '<option value="-1">none</option>' + UP.heads.map((x, i) => '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>' + esc(x || 'Column ' + (i + 1)) + '</option>').join('');
+  const sample = i => i < 0 || i == null ? '' : UP.rows.map(r => r[i]).filter(v => v !== '' && v != null).slice(0, 3).map(v => esc(String(v).slice(0, 30))).join(' · ');
+  h += '<div class="card mb20"><div class="thead-row"><div class="thead-title">2 · Match columns</div><div class="lbl-sm">Auto matched. Fix a wrong one and it is remembered next time.</div></div>'
+    + '<div class="twrap" style="max-height:none"><table class="tbl hgrid"><thead><tr><th>Field</th><th class="l">Column in file</th><th class="l">Sample values</th></tr></thead><tbody>'
+    + T.fields.map(f => '<tr><td>' + (f === 'date' && !isS ? 'Date / From date' : FIELD_LBL[f]) + (T.req.includes(f) ? ' <span class="neg">*</span>' : ' <span class="muted">optional</span>') + '</td>'
+      + '<td class="l"><select class="msel" onchange="setUpMap(\'' + f + '\',this.value)">' + opts(UP.map[f]) + '</select></td><td class="l muted">' + sample(UP.map[f]) + '</td></tr>').join('')
+    + '</tbody></table></div></div>';
+
+  if (!R || R.miss) return h + '<div class="card"><div class="warn-bar" style="margin:14px 18px">Pick a column for: ' + ((R && R.miss) || []).map(f => FIELD_LBL[f]).join(', ') + '</div></div>';
+  const valH = isS ? 'GMV' : 'Promos';
+  const rows = R.list.map(M => {
+    const ref = CM2_OK ? cm2Ref(T.p, T.t, M.ym) : null, val = isS ? M.gmv : M.promos, ex = statusOf(M.ym, T.p, T.t);
+    const partial = +M.from.slice(8) > 1 || +M.to.slice(8) < daysIn(M.ym), notes = [];
+    if (partial) notes.push('<span class="neg">Partial month. Saving replaces all ' + T.label + ' for ' + ymLabel(M.ym) + '</span>');
+    if (ex) notes.push('Replaces saved ' + fmtL(isS ? ex.gmv : ex.promos) + ' (' + esc(ex.at) + ')');
+    return '<tr><td><label style="cursor:pointer"><input type="checkbox"' + (UP.sel[M.ym] ? ' checked' : '') + ' onchange="UP.sel[\'' + M.ym + '\']=this.checked;render()"> ' + ymLabel(M.ym) + '</label></td>'
+      + '<td>' + dayRange(M.from, M.to) + '</td><td>' + fmt(M.raw) + '</td><td><b>' + fmt(M.out.length) + '</b></td><td>' + M.cities.size + '</td><td>' + M.skus.size + '</td>'
+      + (isS ? '<td>' + fmt(M.qty) + '</td>' : '') + '<td><b>₹' + fmt(val) + '</b></td>' + (T.p === 'blinkit' && isS ? '<td>₹' + fmt(M.promos) + '</td>' : '')
+      + '<td>' + (ref ? '₹' + fmt(ref) : '<span class="muted">not in CM2</span>') + '</td>'
+      + (ref ? '<td class="' + (Math.abs(pct(val - ref, ref)) <= 1 ? 'pos' : 'neg') + '"><b>' + fmtPct(pct(val - ref, ref)) + '</b></td>' : '<td class="muted">—</td>')
+      + '<td class="l lbl-sm">' + notes.join('<br>') + '</td></tr>';
+  }).join('');
+  const selN = R.list.filter(M => UP.sel[M.ym]).length;
+  h += '<div class="card mb20"><div class="thead-row"><div class="thead-title">3 · Check against CM2 and save</div><div class="lbl-sm">Diff within ±1% shows green</div></div>'
+    + (R.skipped ? '<div class="warn-bar">' + fmt(R.skipped) + ' rows skipped, no readable date (usually total rows): ' + esc(R.bad.join(', ')) + '</div>' : '')
+    + '<div class="twrap" style="max-height:none"><table class="tbl hgrid"><thead><tr><th>Month</th><th>Days</th><th>File rows</th><th>Saved rows</th><th>Cities</th><th>SKUs</th>'
+    + (isS ? '<th>Qty</th>' : '') + '<th>' + valH + '</th>' + (T.p === 'blinkit' && isS ? '<th>Brand fund</th>' : '') + '<th>CM2 ' + valH + '</th><th>Diff</th><th class="l">Note</th></tr></thead><tbody>'
+    + (rows || '<tr><td colspan="12" class="empty">No usable rows</td></tr>') + '</tbody></table></div>'
+    + '<div style="padding:14px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><button class="btn primary"' + (UP.saving || !selN ? ' disabled' : '') + ' onclick="saveUpload()">'
+    + (UP.saving ? 'Saving…' : 'Save ' + selN + ' month' + (selN === 1 ? '' : 's') + ' of ' + T.label) + '</button><span class="lbl-sm">' + esc(UP.msg) + '</span></div></div>';
+  return h;
+}
+
+function setUpType(k) { UP.type = k; UP.sel = {}; if (UP.rows.length) { autoMap(); computeUpload(); } render(); }
+function setUpMap(f, v) {
+  UP.map[f] = +v;
+  try { const s = {}; UP_TYPES[UP.type].fields.forEach(x => s[x] = UP.map[x] >= 0 ? UP.heads[UP.map[x]] : ''); localStorage.setItem('cs_map_' + UP.type, JSON.stringify(s)); } catch (e) {}
+  computeUpload(); render();
+}
+async function postAPI(body) {
+  const r = await fetch(CITY_API, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
+  const j = await r.json(); if (j && j.error) throw new Error(j.error); return j;
+}
+async function afterWrite(yms) {
+  yms.forEach(y => delete DATA[y]);
+  await loadMonths();
+  if (!ST.ym || !MONTHS_AVAIL.includes(ST.ym)) ST.ym = MONTHS_AVAIL[MONTHS_AVAIL.length - 1] || null;
+  if (ST.ym) { await loadMonth(ST.ym, true); buildFacts(); } else FACTS = [];
+}
+async function saveUpload() {
+  if (DEMO) { toast('Demo mode: set CITY_API to save', 'err'); return; }
+  const T = UP_TYPES[UP.type], list = ((UP.res && UP.res.list) || []).filter(M => UP.sel[M.ym]); if (!list.length) return;
+  UP.saving = true; render();
+  const r2 = x => Math.round(x * 100) / 100, CH = 4000;
+  try {
+    for (const M of list) {
+      const rows = M.out.map(a => [a.b, a.city, a.sku, r2(a.qty), r2(a.gmv), r2(a.promos)]), n = Math.max(1, Math.ceil(rows.length / CH));
+      for (let i = 0; i < n; i++) {
+        UP.msg = ymLabel(M.ym) + ' · part ' + (i + 1) + ' of ' + n; render();
+        await postAPI({ action:'upload', ym:M.ym, portal:T.p, type:T.t, file:UP.name, from:M.from, to:M.to, replace:i === 0, last:i === n - 1, rows:rows.slice(i * CH, (i + 1) * CH) });
+      }
+    }
+    await afterWrite(list.map(M => M.ym));
+    toast(T.label + ' saved for ' + list.map(M => ymLabel(M.ym)).join(', '));
+    Object.assign(UP, { name:'', sheet:'', hdr:0, heads:[], rows:[], res:null, sel:{}, msg:'' });
+  } catch (e) { toast('Save failed: ' + e.message, 'err'); UP.msg = 'Failed: ' + e.message + '. Save again, it overwrites.'; }
+  UP.saving = false; render();
+}
+async function clearUpload(ym, p, t) {
+  if (DEMO) return;
+  if (!confirm('Clear ' + pLabel(p) + ' ' + t + ' for ' + ymLabel(ym) + '?')) return;
+  try { await postAPI({ action:'clear', ym, portal:p, type:t }); await afterWrite([ym]); toast('Cleared'); }
+  catch (e) { toast('Clear failed: ' + e.message, 'err'); }
+  render();
 }
 
 // ── Render & events ───────────────────────────────────
 function render() {
   CHARTS.forEach(c => c.destroy()); CHARTS = [];
   let body;
-  if (!ST.ym) body = '<div class="card empty">No months found in the City Sales sheet yet. Paste your first pivot and click ↻.</div>';
+  if (ST.view === 'upload') body = vUpload();
+  else if (!ST.ym) body = '<div class="card empty">No months saved yet.<br><br><button class="btn primary" onclick="go(\'upload\')">⬆️ Upload data</button></div>';
   else body = ({ overview: vOverview, city: vCity, matrix: vMatrix, health: vHealth }[ST.view] || vOverview)();
   const err = LOAD_ERR ? '<div class="warn-bar" style="margin:0 0 16px">Something failed while loading: ' + esc(LOAD_ERR) + '</div>' : '';
   document.getElementById('app').innerHTML = '<div class="shell">' + sidebar() + '<main class="main">' + err + body + '</main></div>';
@@ -761,7 +1033,7 @@ async function init() {
   try {
     await Promise.all([loadCM2(), loadMap(), loadMonths()]);
     ST.ym = MONTHS_AVAIL[MONTHS_AVAIL.length - 1] || null;
-    if (ST.ym) { await loadMonth(ST.ym); buildFacts(); }
+    if (ST.ym) { await loadMonth(ST.ym); buildFacts(); } else ST.view = 'upload';
     LOAD_ERR = '';
   } catch (e) { LOAD_ERR = (e && e.stack) ? e.stack.split('\n').slice(0, 3).join(' | ') : String(e); console.error(e); toast('Load failed: ' + e.message, 'err'); }
   render();

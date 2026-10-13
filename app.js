@@ -131,7 +131,8 @@ function identify(p, name) {
 
 // ── City names ────────────────────────────────────────
 const CITY_ALIAS = { bangalore:'Bengaluru', bengaluru:'Bengaluru', gurgaon:'Gurugram', gurugram:'Gurugram', bombay:'Mumbai',
-  calcutta:'Kolkata', madras:'Chennai', 'new delhi':'Delhi', poona:'Pune', 'navi mumbai':'Navi Mumbai', vizag:'Visakhapatnam' };
+  calcutta:'Kolkata', madras:'Chennai', 'new delhi':'Delhi', poona:'Pune', 'navi mumbai':'Navi Mumbai', vizag:'Visakhapatnam',
+  'sas nagar':'Mohali', belgavi:'Belagavi', belgaum:'Belagavi', 'chatrapati sambhaji nagar':'Chhatrapati Sambhajinagar', 'chhatrapati sambhaji nagar':'Chhatrapati Sambhajinagar' };
 const CITY_STATE = {"mumbai":"Maharashtra","navi mumbai":"Maharashtra","thane":"Maharashtra","pune":"Maharashtra","nagpur":"Maharashtra","nashik":"Maharashtra","aurangabad":"Maharashtra","chhatrapati sambhajinagar":"Maharashtra","kolhapur":"Maharashtra","solapur":"Maharashtra","amravati":"Maharashtra","akola":"Maharashtra","nanded":"Maharashtra","sangli":"Maharashtra","satara":"Maharashtra","jalgaon":"Maharashtra","ahmednagar":"Maharashtra","ahilyanagar":"Maharashtra","latur":"Maharashtra","dhule":"Maharashtra","kalyan":"Maharashtra","dombivli":"Maharashtra","bhiwandi":"Maharashtra","vasai":"Maharashtra","virar":"Maharashtra","panvel":"Maharashtra","ulhasnagar":"Maharashtra","mira bhayandar":"Maharashtra","palghar":"Maharashtra","lonavala":"Maharashtra","baramati":"Maharashtra","ratnagiri":"Maharashtra","wardha":"Maharashtra","chandrapur":"Maharashtra","pimpri chinchwad":"Maharashtra","kharghar":"Maharashtra","ambernath":"Maharashtra","badlapur":"Maharashtra","delhi":"Delhi","new delhi":"Delhi","gurugram":"Haryana","faridabad":"Haryana","sonipat":"Haryana","panipat":"Haryana","karnal":"Haryana","ambala":"Haryana","rohtak":"Haryana","hisar":"Haryana","bahadurgarh":"Haryana","panchkula":"Haryana","rewari":"Haryana","kurukshetra":"Haryana","yamunanagar":"Haryana","bhiwani":"Haryana","jhajjar":"Haryana","palwal":"Haryana","sirsa":"Haryana","kaithal":"Haryana","jind":"Haryana","manesar":"Haryana","noida":"Uttar Pradesh","greater noida":"Uttar Pradesh","ghaziabad":"Uttar Pradesh","lucknow":"Uttar Pradesh","kanpur":"Uttar Pradesh","agra":"Uttar Pradesh","varanasi":"Uttar Pradesh","prayagraj":"Uttar Pradesh","allahabad":"Uttar Pradesh","meerut":"Uttar Pradesh","bareilly":"Uttar Pradesh","aligarh":"Uttar Pradesh","moradabad":"Uttar Pradesh","gorakhpur":"Uttar Pradesh","jhansi":"Uttar Pradesh","mathura":"Uttar Pradesh","vrindavan":"Uttar Pradesh","saharanpur":"Uttar Pradesh","firozabad":"Uttar Pradesh","ayodhya":"Uttar Pradesh","muzaffarnagar":"Uttar Pradesh","shahjahanpur":"Uttar Pradesh","rampur":"Uttar Pradesh","hapur":"Uttar Pradesh","bulandshahr":"Uttar Pradesh","etawah":"Uttar Pradesh","sitapur":"Uttar Pradesh","raebareli":"Uttar Pradesh","bengaluru":"Karnataka","mysuru":"Karnataka","mysore":"Karnataka","mangaluru":"Karnataka","mangalore":"Karnataka","hubli":"Karnataka","hubballi":"Karnataka","dharwad":"Karnataka","belagavi":"Karnataka","belgaum":"Karnataka","davanagere":"Karnataka","ballari":"Karnataka","bellary":"Karnataka","udupi":"Karnataka","shivamogga":"Karnataka","shimoga":"Karnataka","tumakuru":"Karnataka","tumkur":"Karnataka","kalaburagi":"Karnataka","gulbarga":"Karnataka","hosur road":"Karnataka","hyderabad":"Telangana","secunderabad":"Telangana","warangal":"Telangana","karimnagar":"Telangana","nizamabad":"Telangana","khammam":"Telangana","sangareddy":"Telangana","chennai":"Tamil Nadu","coimbatore":"Tamil Nadu","madurai":"Tamil Nadu","tiruchirappalli":"Tamil Nadu","trichy":"Tamil Nadu","salem":"Tamil Nadu","tiruppur":"Tamil Nadu","erode":"Tamil Nadu","vellore":"Tamil Nadu","tirunelveli":"Tamil Nadu","thoothukudi":"Tamil Nadu","hosur":"Tamil Nadu","kanchipuram":"Tamil Nadu","pondicherry road":"Tamil Nadu","thanjavur":"Tamil Nadu","nagercoil":"Tamil Nadu","kochi":"Kerala","ernakulam":"Kerala","thiruvananthapuram":"Kerala","trivandrum":"Kerala","kozhikode":"Kerala","calicut":"Kerala","thrissur":"Kerala","kollam":"Kerala","kannur":"Kerala","alappuzha":"Kerala","kottayam":"Kerala","palakkad":"Kerala","malappuram":"Kerala","ahmedabad":"Gujarat","surat":"Gujarat","vadodara":"Gujarat","rajkot":"Gujarat","gandhinagar":"Gujarat","bhavnagar":"Gujarat","jamnagar":"Gujarat","anand":"Gujarat","nadiad":"Gujarat","vapi":"Gujarat","valsad":"Gujarat","navsari":"Gujarat","bharuch":"Gujarat","mehsana":"Gujarat","junagadh":"Gujarat","morbi":"Gujarat","gandhidham":"Gujarat","jaipur":"Rajasthan","jodhpur":"Rajasthan","udaipur":"Rajasthan","kota":"Rajasthan","ajmer":"Rajasthan","bikaner":"Rajasthan","alwar":"Rajasthan","bhilwara":"Rajasthan","sikar":"Rajasthan","bhiwadi":"Rajasthan","sri ganganagar":"Rajasthan","pali":"Rajasthan","kolkata":"West Bengal","howrah":"West Bengal","siliguri":"West Bengal","durgapur":"West Bengal","asansol":"West Bengal","kharagpur":"West Bengal","bardhaman":"West Bengal","barasat":"West Bengal","salt lake":"West Bengal","indore":"Madhya Pradesh","bhopal":"Madhya Pradesh","gwalior":"Madhya Pradesh","jabalpur":"Madhya Pradesh","ujjain":"Madhya Pradesh","sagar":"Madhya Pradesh","ratlam":"Madhya Pradesh","rewa":"Madhya Pradesh","satna":"Madhya Pradesh","dewas":"Madhya Pradesh","ludhiana":"Punjab","amritsar":"Punjab","jalandhar":"Punjab","patiala":"Punjab","bathinda":"Punjab","mohali":"Punjab","sahibzada ajit singh nagar":"Punjab","zirakpur":"Punjab","phagwara":"Punjab","pathankot":"Punjab","hoshiarpur":"Punjab","kharar":"Punjab","chandigarh":"Chandigarh","dehradun":"Uttarakhand","haridwar":"Uttarakhand","rishikesh":"Uttarakhand","haldwani":"Uttarakhand","roorkee":"Uttarakhand","rudrapur":"Uttarakhand","kashipur":"Uttarakhand","nainital":"Uttarakhand","visakhapatnam":"Andhra Pradesh","vijayawada":"Andhra Pradesh","guntur":"Andhra Pradesh","nellore":"Andhra Pradesh","tirupati":"Andhra Pradesh","kakinada":"Andhra Pradesh","rajahmundry":"Andhra Pradesh","kurnool":"Andhra Pradesh","anantapur":"Andhra Pradesh","eluru":"Andhra Pradesh","ongole":"Andhra Pradesh","bhubaneswar":"Odisha","cuttack":"Odisha","rourkela":"Odisha","puri":"Odisha","sambalpur":"Odisha","berhampur":"Odisha","patna":"Bihar","gaya":"Bihar","muzaffarpur":"Bihar","bhagalpur":"Bihar","darbhanga":"Bihar","ranchi":"Jharkhand","jamshedpur":"Jharkhand","dhanbad":"Jharkhand","bokaro":"Jharkhand","raipur":"Chhattisgarh","bhilai":"Chhattisgarh","bilaspur":"Chhattisgarh","durg":"Chhattisgarh","korba":"Chhattisgarh","guwahati":"Assam","dibrugarh":"Assam","silchar":"Assam","jorhat":"Assam","goa":"Goa","panaji":"Goa","margao":"Goa","vasco da gama":"Goa","mapusa":"Goa","north goa":"Goa","south goa":"Goa","jammu":"Jammu and Kashmir","srinagar":"Jammu and Kashmir","shimla":"Himachal Pradesh","solan":"Himachal Pradesh","baddi":"Himachal Pradesh","dharamshala":"Himachal Pradesh","mandi":"Himachal Pradesh","puducherry":"Puducherry","pondicherry":"Puducherry"};
 let CITY_MAP = {}, STATE_MAP = {};
 function stateOf(city) {
@@ -710,16 +711,16 @@ const KW = {
   sku:    ['product name','item name','sku name','product title','product','item','sku','title','name'],
   qty:    ['qty sold','quantity sold','units sold','quantity','qty','units','sold'],
   gmv:    ['mrp gmv','gmv','gross merchandise value','mrp value','sales mrp','gross sales','sales value','sales','revenue','mrp'],
-  promo:  ['total brand fund','brand fund','promo amount','promo','discount','burn','funding','spend','amount'],
+  promo:  ['promo claim amt','promo claim amount','claim amt','claim amount','total brand fund','brand fund','promo amount','promo','discount','burn','funding','spend','amount'],
 };
 const UP = { type:'blinkit|sales', name:'', sheet:'', hdr:0, heads:[], rows:[], map:{}, res:null, sel:{}, saving:false, msg:'' };
 const KINDS = [['blinkit','sales','Blinkit Sales'], ['zepto','sales','Zepto Sales'], ['zepto','promos','Zepto Promos'], ['instamart','sales','Instamart Sales'], ['instamart','promos','Instamart Promos']];
 
-const normH = s => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const normH = s => String(s == null ? '' : s).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 function scoreH(h, f) {
   if (!h) return 0;
   if (f === 'date' && /\b(end|till|to date)\b/.test(h)) return 0;
-  if ((f === 'qty' || f === 'gmv') && /\bid\b/.test(h)) return 0;
+  if ((f === 'qty' || f === 'gmv' || f === 'promo') && /\b(id|percentage|percent|pct)\b/.test(h)) return 0;
   let best = 0;
   KW[f].forEach((k, i) => { if (h === k) best = Math.max(best, 200 - i); else if ((' ' + h + ' ').includes(' ' + k + ' ')) best = Math.max(best, 100 - i); });
   return best;
@@ -769,9 +770,10 @@ function toISO(v, ord) {
     else if ((x = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/))) { y = +x[3]; if (ord === 'mdy') { m = +x[1]; d = +x[2]; } else { d = +x[1]; m = +x[2]; } }
     else if (/^\d{5}(\.\d+)?$/.test(s)) return toISO(+s, ord);
     else {
-      const mm = s.toLowerCase().match(/[a-z]{3,}/), yy = s.match(/\b(\d{4})\b/), dd = s.replace(/\b\d{4}\b/, '').match(/\b(\d{1,2})\b/);
-      if (!mm || !yy || !dd) return null;
-      const mi = MON3.indexOf(mm[0].slice(0, 3)); if (mi < 0) return null;
+      // "Sat, September 12, 2026", "01-Sep-2026", "Sep 1 2026": first word that is a month name
+      const mi = (s.toLowerCase().match(/[a-z]{3,}/g) || []).map(w => MON3.indexOf(w.slice(0, 3))).find(i => i >= 0);
+      const yy = s.match(/\b(\d{4})\b/), dd = s.replace(/\b\d{4}\b/, '').match(/\b(\d{1,2})\b/);
+      if (mi === undefined || !yy || !dd) return null;
       y = +yy[1]; m = mi + 1; d = +dd[1];
     }
   }
@@ -791,18 +793,26 @@ function dayList(a, b) {
   return out;
 }
 
-async function pickFile(file) {
-  if (!file) return;
-  toast('Reading ' + file.name + '…');
+// Several files can be picked together (e.g. Zepto's 1–10, 11–20, 21–end and returns files); they are merged by column name
+async function pickFile(files) {
+  files = [...(files || [])]; if (!files.length) return;
+  toast('Reading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '…');
   try {
     await loadXLSX();
-    const buf = await file.arrayBuffer(), isCsv = /\.(csv|txt)$/i.test(file.name);
-    const wb = XLSX.read(buf, { type:'array', raw: isCsv, cellDates:false });
-    let best = null;
-    wb.SheetNames.forEach(n => { const a = XLSX.utils.sheet_to_json(wb.Sheets[n], { header:1, raw:true, defval:'', blankrows:false }); if (!best || a.length > best.a.length) best = { n, a }; });
-    if (!best || !best.a.length) throw new Error('File is empty');
-    const hdr = findHeader(best.a);
-    Object.assign(UP, { name:file.name, sheet: wb.SheetNames.length > 1 ? best.n : '', hdr, heads:(best.a[hdr] || []).map(h => String(h).trim()), rows:best.a.slice(hdr + 1), sel:{}, msg:'' });
+    const heads = [], rows = [], sheets = []; let hdr0 = 0;
+    for (const file of files) {
+      const buf = await file.arrayBuffer(), isCsv = /\.(csv|txt)$/i.test(file.name);
+      const wb = XLSX.read(buf, { type:'array', raw: isCsv, cellDates:false });
+      let best = null;
+      wb.SheetNames.forEach(n => { const a = XLSX.utils.sheet_to_json(wb.Sheets[n], { header:1, raw:true, defval:'', blankrows:false }); if (!best || a.length > best.a.length) best = { n, a }; });
+      if (!best || !best.a.length) throw new Error(file.name + ' is empty');
+      const hdr = findHeader(best.a), fh = (best.a[hdr] || []).map(h => String(h).trim());
+      if (!heads.length) hdr0 = hdr;
+      const idx = fh.map(h => { let i = heads.indexOf(h); if (i < 0) { heads.push(h); i = heads.length - 1; } return i; });
+      best.a.slice(hdr + 1).forEach(r => { const o = new Array(heads.length).fill(''); r.forEach((v, j) => { if (idx[j] !== undefined) o[idx[j]] = v; }); rows.push(o); });
+      if (wb.SheetNames.length > 1) sheets.push(best.n);
+    }
+    Object.assign(UP, { name: files.map(f => f.name).join(' + '), sheet: sheets.join(', '), hdr: files.length > 1 ? -1 : hdr0, heads, rows, sel:{}, msg:'' });
     autoMap(); computeUpload(); render();
   } catch (e) { toast('Could not read file: ' + e.message, 'err'); }
 }
@@ -824,7 +834,7 @@ function computeUpload() {
   UP.rows.forEach((r, i) => {
     if (!r || !r.some(c => c !== '' && c != null)) return;
     const d1 = toISO(r[m.date], o1);
-    if (!d1) { skipped++; if (bad.length < 3) bad.push('row ' + (UP.hdr + i + 2) + ' "' + String(r[m.date]).slice(0, 25) + '"'); return; }
+    if (!d1) { skipped++; if (bad.length < 3) bad.push((UP.hdr >= 0 ? 'row ' + (UP.hdr + i + 2) : 'merged row ' + (i + 1)) + ' "' + String(r[m.date]).slice(0, 25) + '"'); return; }
     const city = String(r[m.city] == null ? '' : r[m.city]).trim() || 'Unknown';
     const sku = m.sku >= 0 ? String(r[m.sku] == null ? '' : r[m.sku]).trim() : '';
     if (T.t === 'sales') {
@@ -872,9 +882,9 @@ function vUpload() {
     + statusCard()
     + '<div class="card mb20"><div class="thead-row"><div class="thead-title">1 · File type and file</div>' + typeSeg + '</div>'
     + '<div class="note">' + (isS ? 'Order or day level export with date, city, product, qty and GMV' + (T.p === 'blinkit' ? '. Brand fund column becomes promos' : '')
-        : 'Promo export with date (or from and to date), city, product (optional) and amount. Ranges are split by day into 1–10, 11–20, 21–end') + '. CSV or Excel, any size.</div>'
-    + '<div style="padding:0 18px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><input type="file" accept=".csv,.xlsx,.xls,.txt" onchange="pickFile(this.files[0])">'
-    + (UP.name ? '<span class="lbl-sm">' + esc(UP.name) + (UP.sheet ? ' · sheet ' + esc(UP.sheet) : '') + ' · ' + fmt(UP.rows.length) + ' rows · header row ' + (UP.hdr + 1) + '</span>' : '') + '</div></div>';
+        : 'Promo export with date (or from and to date), city, product (optional) and amount. Ranges are split by day into 1–10, 11–20, 21–end') + '. CSV or Excel. Pick all files of a month together (e.g. Zepto 1–10, 11–20, 21–end and returns), they are merged.</div>'
+    + '<div style="padding:0 18px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><input type="file" multiple accept=".csv,.xlsx,.xls,.txt" onchange="pickFile(this.files)">'
+    + (UP.name ? '<span class="lbl-sm">' + esc(UP.name) + (UP.sheet ? ' · sheet ' + esc(UP.sheet) : '') + ' · ' + fmt(UP.rows.length) + ' rows' + (UP.hdr >= 0 ? ' · header row ' + (UP.hdr + 1) : '') + '</span>' : '') + '</div></div>';
   if (!UP.rows.length) return h;
 
   const opts = sel => '<option value="-1">none</option>' + UP.heads.map((x, i) => '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>' + esc(x || 'Column ' + (i + 1)) + '</option>').join('');

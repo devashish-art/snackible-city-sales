@@ -18,6 +18,9 @@ const PERIODS = { all:'Full month', 1:'1st – 10th', 2:'11th – 20th', 3:'21st
 const ST = { geo:'city', view:'overview', ym:null, period:'all', portal:'all', split:'netSales', city:null,
              metric:'ns', open:{}, sideCollapsed:false, loading:false };
 let MONTHS_AVAIL = [], STATUS = [], DATA = {}, CM2 = { config:{}, data:{} }, CM2_OK = false;
+// CM2_READY: the selected month is saved in the CM2 dashboard for every portal with sales. If not, CM2 / Ads + Vis are not calculated at all.
+let CM2_READY = false;
+const NOT_READY = () => ymLabel(ST.ym) + ' not ready in CM2 dashboard';
 let MAP = null, MAP_OK = false, FACTS = [], INFO = {}, CHARTS = [], LOAD_ERR = '';
 
 // ── Helpers ───────────────────────────────────────────
@@ -209,10 +212,6 @@ function latestCM2Before(p, label) {
   });
   return best;
 }
-function adsNote() {
-  const ests = PORTALS.map(p => (INFO.portals || {})[p]).filter(x => x && x.est);
-  return ests.length ? ' (estimated from ' + ests[0].est.from + ')' : '';
-}
 function cfgFor(p, label) {
   const e = cm2Entry(p, label);
   if (e && e.config) return { cfg: e.config, src: 'CM2 · ' + label };
@@ -291,6 +290,7 @@ function buildFacts() {
     zepto:     { sales: (D.zepto || {}).sales || [], promoDaily: (D.zepto || {}).promos || [], promoRange: [] },
     instamart: { sales: (D.swiggy || {}).sales || [], promoDaily: (D.swiggy || {}).promos || [], promoRange: [] },
   };
+  CM2_READY = CM2_OK && PORTALS.filter(p => src[p].sales.length).every(p => !!cm2Entry(p, label));
   PORTALS.forEach(p => {
     const { cfg, src: rateSrc } = cfgFor(p, label);
     const comm = (+cfg.commission || 0) / 100, tax = (+cfg.tax || 0) / 100;
@@ -353,16 +353,9 @@ function buildFacts() {
     // Ads + visibility: CM2 total for this portal-month, spread by net sales (or qty) share
     const e = cm2Entry(p, label); let t = null, adsvis = 0, est = null;
     const tot = en => totals(en.skus, en.nlcSkus, en.config || cfg, Object.assign({}, en.portalTotals || {}, { splitBy: ST.split }), Object.assign({}, en.nlcTotals || {}, { splitBy: ST.split }));
-    if (e) { t = tot(e); adsvis = t.ads + t.vis; }
-    else {
-      // Month not in CM2 yet: estimate with the latest earlier month's Ads + Vis as % of Net Sales
-      const prev = latestCM2Before(p, label);
-      if (prev) {
-        const pt = tot(prev.e), pctAV = pt.netSales > 0 ? (pt.ads + pt.vis) / pt.netSales : 0;
-        const ns = out.reduce((a, x) => a + x.ns, 0);
-        adsvis = ns * pctAV; est = { from: prev.label, pct: pctAV * 100 };
-      }
-    }
+    if (e) t = tot(e);
+    // Ads + Vis only when the whole month is in CM2. No estimates from earlier months.
+    if (t && CM2_READY) adsvis = t.ads + t.vis;
     if (adsvis) {
       const w = x => ST.split === 'qty' ? x.qty : x.ns, tw = out.reduce((a, x) => a + w(x), 0);
       if (tw > 0) out.forEach(x => { x.adsvis = adsvis * w(x) / tw; });
@@ -376,7 +369,7 @@ function buildFacts() {
 const SUMS = ['gmv','qty','gross','ns','comm','cogs','de','lab','log','promos','adsvis'];
 function blank() { const a = {}; SUMS.forEach(k => a[k] = 0); return a; }
 function add(a, f) { SUMS.forEach(k => a[k] += f[k] || 0); return a; }
-function fin(a) { a.gm = a.ns - a.cogs - a.de; a.cm1 = a.gm - a.lab - a.log; a.cm2 = a.cm1 - a.promos - a.adsvis; return a; }
+function fin(a) { a.gm = a.ns - a.cogs - a.de; a.cm1 = a.gm - a.lab - a.log; a.cm2 = CM2_READY ? a.cm1 - a.promos - a.adsvis : null; return a; }
 function view(extra) {
   return FACTS.filter(f => (ST.period === 'all' || f.b === +ST.period) && (ST.portal === 'all' || f.p === ST.portal) && (!extra || extra(f)));
 }
@@ -404,7 +397,7 @@ function filters(showPortal) {
     + (showPortal === false ? '' : seg(ST.portal, [['all', 'All'], ['blinkit', 'Blinkit'], ['zepto', 'Zepto'], ['instamart', 'Instamart']], 'setPortal'))
     + '<select class="msel" onchange="setPeriod(this.value)">' + Object.entries(PERIODS).map(([v, l]) => '<option value="' + v + '"' + (String(ST.period) === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
     + '<select class="msel" onchange="setMonth(this.value)">' + MONTHS_AVAIL.map(m => '<option value="' + m + '"' + (m === ST.ym ? ' selected' : '') + '>' + ymLabel(m) + '</option>').join('') + '</select>'
-    + '<span class="lbl-sm">Ads split</span>' + seg(ST.split, [['netSales', 'Net Sales'], ['qty', 'Qty']], 'setSplit')
+    + (CM2_READY ? '<span class="lbl-sm">Ads split</span>' + seg(ST.split, [['netSales', 'Net Sales'], ['qty', 'Qty']], 'setSplit') : '')
     + '<button class="btn" onclick="exportWorking()" title="Excel with live formulas for the whole month">📥 Export working</button>'
     + '<button class="btn" onclick="refresh()" title="Reload data from sheets">↻</button></div>';
 }
@@ -415,22 +408,23 @@ function kpiRow(t, extraSub) {
     + kpi('GMV', '₹' + fmt(t.gmv), fmt(t.qty) + ' units')
     + kpi('Net Sales', '₹' + fmt(t.ns), fmtPct(pct(t.ns, t.gmv)) + ' of GMV' + (extraSub || ''))
     + kpi('CM1', '₹' + fmt(t.cm1), fmtPct(pct(t.cm1, t.ns)) + ' of NS · ' + fmtPct(pct(t.cm1, t.gmv)) + ' of GMV', pc(t.cm1))
-    + kpi('CM2', '₹' + fmt(t.cm2), fmtPct(pct(t.cm2, t.ns)) + ' of NS · ' + fmtPct(pct(t.cm2, t.gmv)) + ' of GMV', pc(t.cm2))
+    + (CM2_READY ? kpi('CM2', '₹' + fmt(t.cm2), fmtPct(pct(t.cm2, t.ns)) + ' of NS · ' + fmtPct(pct(t.cm2, t.gmv)) + ' of GMV', pc(t.cm2))
+      : kpi('CM2', '—', NOT_READY() + '. Shown once the month is saved there.', 'muted'))
     + '</div>';
 }
 function fsStrip(t, title) {
   const c = (l, v, cls) => '<div class="fs-chip"><span>' + l + '</span><b class="' + (cls || '') + '">' + v + '</b></div>';
   return '<div class="fs-strip"><div class="fs-chip"><span>View</span><b style="font-size:13px">' + esc(title) + '</b></div>'
-    + c('GMV', fmtL(t.gmv)) + c('Net Sales', fmtL(t.ns)) + c('CM1', fmtPct(pct(t.cm1, t.ns)), pc(t.cm1)) + c('CM2', fmtPct(pct(t.cm2, t.ns)), pc(t.cm2)) + '</div>';
+    + c('GMV', fmtL(t.gmv)) + c('Net Sales', fmtL(t.ns)) + c('CM1', fmtPct(pct(t.cm1, t.ns)), pc(t.cm1)) + (CM2_READY ? c('CM2', fmtPct(pct(t.cm2, t.ns)), pc(t.cm2)) : '') + '</div>';
 }
 
 // P&L row cells shared by city and SKU tables
-const PL_HEAD = '<th>Qty</th><th>GMV</th><th>Net Sales</th><th>Share</th><th>Gross Margin</th><th>CM1</th><th>CM1%</th><th>Promos</th><th>Promo % GMV</th><th>Ads + Vis</th><th>CM2</th><th>CM2%</th>';
+const PL_HEAD = () => '<th>Qty</th><th>GMV</th><th>Net Sales</th><th>Share</th><th>Gross Margin</th><th>CM1</th><th>CM1%</th><th>Promos</th><th>Promo % GMV</th>' + (CM2_READY ? '<th>Ads + Vis</th><th>CM2</th><th>CM2%</th>' : '');
 function plCells(a, base) {
   return '<td>' + fmt(a.qty) + '</td><td>₹' + fmt(a.gmv) + '</td><td><b>₹' + fmt(a.ns) + '</b></td><td class="muted">' + fmtPct(pct(a.ns, base)) + '</td>'
     + '<td>₹' + fmt(a.gm) + '</td><td>₹' + fmt(a.cm1) + '</td><td><span class="pill ' + pc(a.cm1) + '">' + fmtPct(pct(a.cm1, a.ns)) + '</span></td>'
-    + '<td>₹' + fmt(a.promos) + '</td><td class="muted">' + fmtPct(pct(a.promos, a.gmv)) + '</td><td>₹' + fmt(a.adsvis) + '</td>'
-    + '<td class="' + pc(a.cm2) + '"><b>₹' + fmt(a.cm2) + '</b></td><td><span class="pill ' + pc(a.cm2) + '">' + fmtPct(pct(a.cm2, a.ns)) + '</span></td>';
+    + '<td>₹' + fmt(a.promos) + '</td><td class="muted">' + fmtPct(pct(a.promos, a.gmv)) + '</td>'
+    + (CM2_READY ? '<td>₹' + fmt(a.adsvis) + '</td><td class="' + pc(a.cm2) + '"><b>₹' + fmt(a.cm2) + '</b></td><td><span class="pill ' + pc(a.cm2) + '">' + fmtPct(pct(a.cm2, a.ns)) + '</span></td>' : '');
 }
 function plTable(id, groups, grand, firstCol, extraLabel) {
   const body = groups.map((g, i) => {
@@ -439,8 +433,8 @@ function plTable(id, groups, grand, firstCol, extraLabel) {
     ps.forEach(p => { h += '<tr class="sub sub-' + k + '" style="display:' + (open ? 'table-row' : 'none') + '"><td><span class="dot" style="background:' + pColor(p) + '"></span>' + pLabel(p) + '</td>' + plCells(g.portals[p], grand.ns) + '</tr>'; });
     return h;
   }).join('');
-  return '<div class="twrap"><table class="tbl"><thead><tr><th>' + firstCol + '</th>' + PL_HEAD + '</tr></thead><tbody>'
-    + (body || '<tr><td colspan="13" class="empty">No data for this selection</td></tr>')
+  return '<div class="twrap"><table class="tbl"><thead><tr><th>' + firstCol + '</th>' + PL_HEAD() + '</tr></thead><tbody>'
+    + (body || '<tr><td colspan="' + (CM2_READY ? 13 : 10) + '" class="empty">No data for this selection</td></tr>')
     + '<tr class="gt"><td>Total</td>' + plCells(grand, grand.ns) + '</tr></tbody></table></div>';
 }
 function tableTools(cardId, searchPh) {
@@ -467,12 +461,12 @@ function vOverview() {
     + kpi(geoWord(true, true), cities.length, ST.portal === 'all' ? 'with sales on any portal' : 'on ' + pLabel(ST.portal))
     + kpi('Top ' + geoWord(false, true), cities[0] ? esc(cities[0].label) : '—', cities[0] ? fmtPct(pct(cities[0].tot.ns, grand.ns)) + ' of net sales' : '')
     + kpi('Top 5 Share', fmtPct(pct(top5, grand.ns)), 'of net sales')
-    + kpi('Promos', '₹' + fmt(grand.promos), fmtPct(promoPct) + ' of GMV · Ads + Vis ₹' + fmt(grand.adsvis) + adsNote())
+    + kpi('Promos', '₹' + fmt(grand.promos), fmtPct(promoPct) + ' of GMV' + (CM2_READY ? ' · Ads + Vis ₹' + fmt(grand.adsvis) : ''))
     + '</div>'
-    + '<div class="card mb20"><div class="thead-row"><div class="thead-title">Top 15 ' + geoWord(true, true) + ' by Net Sales</div><div style="display:flex;gap:10px;align-items:center"><span class="lbl-sm">Stacked by portal · hover for CM2%</span>' + geoSeg() + '</div></div><div class="chart-box"><canvas id="ch-cities"></canvas></div></div>'
+    + '<div class="card mb20"><div class="thead-row"><div class="thead-title">Top 15 ' + geoWord(true, true) + ' by Net Sales</div><div style="display:flex;gap:10px;align-items:center"><span class="lbl-sm">Stacked by portal' + (CM2_READY ? ' · hover for CM2%' : '') + '</span>' + geoSeg() + '</div></div><div class="chart-box"><canvas id="ch-cities"></canvas></div></div>'
     + '<div class="card" id="card-cities"><div class="thead-row"><div class="thead-title">' + geoWord(false, true) + ' P&amp;L · ' + esc(scope()) + '</div>' + tableTools('card-cities', 'Search ' + geoWord(false)) + '</div>'
     + fsStrip(grand, scope())
-    + '<div class="note hide-fs">Net Sales: Blinkit & Zepto = GMV less commission less GST · Instamart NLC SKUs = Qty × NLC price less GST. Ads + Vis = CM2 portal total spread by ' + (ST.split === 'qty' ? 'qty' : 'net sales') + '. Click a row to see each portal.</div>'
+    + '<div class="note hide-fs">Net Sales: Blinkit & Zepto = GMV less commission less GST · Instamart NLC SKUs = Qty × NLC price less GST. ' + (CM2_READY ? 'Ads + Vis = CM2 portal total spread by ' + (ST.split === 'qty' ? 'qty' : 'net sales') + '.' : 'CM2 and Ads + Vis hidden: ' + NOT_READY() + '. CM1 uses rates and cost from ' + ((INFO.portals[PORTALS.find(p => INFO.portals[p])] || {}).rateSrc || 'CM2') + '.') + ' Click a row to see each portal.</div>'
     + plTable('c', cities, grand, geoWord(false, true)) + '</div>';
 }
 function drawOverviewChart() {
@@ -483,7 +477,7 @@ function drawOverviewChart() {
     type: 'bar',
     data: { labels: cities.map(c => c.label), datasets: ps.map(p => ({ label: pLabel(p), data: cities.map(c => Math.round((c.portals[p] || {}).ns || 0)), backgroundColor: pColor(p), borderRadius: 4, stack: 's' })) },
     options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { family: 'Poppins' } } },
-      tooltip: { callbacks: { label: c => c.dataset.label + ': ₹' + fmt(c.raw), afterBody: items => { const c = cities[items[0].dataIndex]; return 'CM2: ' + fmtPct(pct(c.tot.cm2, c.tot.ns)) + ' of NS'; } } } },
+      tooltip: { callbacks: { label: c => c.dataset.label + ': ₹' + fmt(c.raw), afterBody: items => { const c = cities[items[0].dataIndex]; if (!CM2_READY) return ''; return 'CM2: ' + fmtPct(pct(c.tot.cm2, c.tot.ns)) + ' of NS'; } } } },
       scales: { x: { stacked: true, ticks: { callback: v => fmtL(v), font: { family: 'Poppins', size: 11 } }, grid: { color: '#EEF2F1' } },
                 y: { stacked: true, ticks: { font: { family: 'Poppins', size: 11 } }, grid: { display: false } } } }
   }));
@@ -499,11 +493,11 @@ function vCity() {
   const skus = groupBy(list, f => f.key, f => f.label);
   // Period split for the selected city (ignores the period filter)
   const per = [1, 2, 3].map(b => fin(FACTS.filter(f => f.city === ST.city && f.b === b && (ST.portal === 'all' || f.p === ST.portal)).reduce(add, blank())));
-  const perRows = per.map((a, i) => '<tr><td>' + PERIODS[i + 1] + '</td><td>₹' + fmt(a.gmv) + '</td><td><b>₹' + fmt(a.ns) + '</b></td><td>₹' + fmt(a.promos) + '</td><td class="muted">' + fmtPct(pct(a.promos, a.gmv)) + '</td><td class="' + pc(a.cm2) + '">₹' + fmt(a.cm2) + '</td><td><span class="pill ' + pc(a.cm2) + '">' + fmtPct(pct(a.cm2, a.ns)) + '</span></td></tr>').join('');
+  const perRows = per.map((a, i) => '<tr><td>' + PERIODS[i + 1] + '</td><td>₹' + fmt(a.gmv) + '</td><td><b>₹' + fmt(a.ns) + '</b></td><td>₹' + fmt(a.promos) + '</td><td class="muted">' + fmtPct(pct(a.promos, a.gmv)) + '</td>' + (CM2_READY ? '<td class="' + pc(a.cm2) + '">₹' + fmt(a.cm2) + '</td><td><span class="pill ' + pc(a.cm2) + '">' + fmtPct(pct(a.cm2, a.ns)) + '</span></td>' : '') + '</tr>').join('');
   return '<div class="ph"><div><div class="ph-title">City Detail</div><div class="ph-sub">' + scope() + '</div></div><div class="ph-right">' + sel + '</div>' + filters() + '</div>'
     + kpiRow(t, ' · ' + fmtPct(pct(t.ns, allNs)) + ' of all cities')
     + '<div class="g2 mb20"><div class="card"><div class="thead-row"><div class="thead-title">' + esc(ST.city) + ' by Period</div><div class="lbl-sm">Matches Zepto promo ranges</div></div>'
-    + '<div class="twrap" style="max-height:none"><table class="tbl"><thead><tr><th>Period</th><th>GMV</th><th>Net Sales</th><th>Promos</th><th>Promo % GMV</th><th>CM2</th><th>CM2%</th></tr></thead><tbody>' + perRows + '</tbody></table></div></div>'
+    + '<div class="twrap" style="max-height:none"><table class="tbl"><thead><tr><th>Period</th><th>GMV</th><th>Net Sales</th><th>Promos</th><th>Promo % GMV</th>' + (CM2_READY ? '<th>CM2</th><th>CM2%</th>' : '') + '</tr></thead><tbody>' + perRows + '</tbody></table></div></div>'
     + '<div class="card"><div class="thead-row"><div class="thead-title">Net Sales by Period</div></div><div class="chart-box" style="height:230px"><canvas id="ch-period"></canvas></div></div></div>'
     + '<div class="card" id="card-skus"><div class="thead-row"><div class="thead-title">SKUs in ' + esc(ST.city) + '</div>' + tableTools('card-skus', 'Search SKU') + '</div>'
     + fsStrip(t, ST.city + ' · ' + scope())
@@ -526,6 +520,7 @@ function vMatrix() {
   const cities = groupBy(list, geoKey), top = cities.slice(0, 12).map(c => c.key);
   const skus = groupBy(list, f => f.key, f => f.label);
   const M = { ns:['Net Sales', a => a.ns, 'amt'], qty:['Qty', a => a.qty, 'num'], cm2:['CM2 ₹', a => a.cm2, 'amt'], cm2p:['CM2 % of NS', a => pct(a.cm2, a.ns), 'pct'], promo:['Promo % of GMV', a => pct(a.promos, a.gmv), 'pct'] };
+  if (!CM2_READY) { delete M.cm2; delete M.cm2p; if (!M[ST.metric]) ST.metric = 'ns'; }
   const [mName, mFn, mType] = M[ST.metric];
   const cell = {}; list.forEach(f => { const c = top.includes(geoKey(f)) ? geoKey(f) : '__others'; const k = f.key + '||' + c; add(cell[k] = cell[k] || blank(), f); });
   const show = (a, max) => {
@@ -556,7 +551,7 @@ function vHealth() {
       + '<td>₹' + fmt(city.gmv) + '</td><td>' + (t ? '₹' + fmt(t.gmv) : '—') + '</td>' + diff(city.gmv, t && t.gmv)
       + '<td>₹' + fmt(city.ns) + '</td><td>' + (t ? '₹' + fmt(t.netSales) : '—') + '</td>' + diff(city.ns, t && t.netSales)
       + '<td>₹' + fmt(city.promos) + '</td><td>' + (t ? '₹' + fmt(t.promos) : '—') + '</td>' + diff(city.promos, t && t.promos)
-      + '<td>₹' + fmt(city.adsvis) + (I.est ? '<div class="lbl-sm" style="color:#9A5B00">est. ' + fmtPct(I.est.pct) + ' of NS from ' + I.est.from + '</div>' : '') + '</td></tr>';
+      + (CM2_READY ? '<td>₹' + fmt(city.adsvis) + '</td>' : '<td class="muted">' + (I.hasCM2 ? 'Waiting for all portals' : 'Not in CM2') + '</td>') + '</tr>';
   }).join('');
   const rates = PORTALS.map(p => { const I = INFO.portals[p] || {}, c = I.cfg || {}; return '<tr><td>' + pLabel(p) + '</td><td>' + c.commission + '%</td><td>' + c.tax + '%</td><td>' + c.directExp + '%</td><td>' + c.labour + '%</td><td>' + c.logistics + '%</td><td class="l muted">' + (I.rateSrc || '') + '</td></tr>'; }).join('');
   const unm = Object.values(INFO.unmapped).filter(u => u.sku && u.sku !== '(Promos with no sales)');
@@ -569,7 +564,7 @@ function vHealth() {
   const bar = (ok, okMsg, warnMsg, btn) => ok ? '<div class="ok-bar">' + okMsg + '</div>' : '<div class="warn-bar">' + warnMsg + (btn || '') + '</div>';
   return '<div class="ph"><div><div class="ph-title">Data Health</div><div class="ph-sub">' + label + ' · checks against the CM2 dashboard</div></div>' + filters(false) + '</div>'
     + '<div class="card mb20"><div class="thead-row"><div class="thead-title">Reconciliation vs CM2 · ' + label + '</div><div class="lbl-sm">Within ±1% shows green</div></div>'
-    + (CM2_OK ? '' : '<div class="warn-bar">CM2 backend could not be loaded, so rates are defaults and ads/vis are zero.</div>')
+    + (CM2_OK ? (CM2_READY ? '' : '<div class="warn-bar">' + NOT_READY() + ' for every portal, so CM2 and Ads + Vis are not calculated. CM1 uses the latest CM2 month\'s rates and cost (see Rates used).</div>') : '<div class="warn-bar">CM2 backend could not be loaded, so rates are defaults and CM2 is not calculated.</div>')
     + '<div class="twrap" style="max-height:none"><table class="tbl hgrid"><thead><tr><th>Portal</th><th>GMV · City files</th><th>GMV · CM2</th><th>Diff</th><th>Net Sales · City</th><th>Net Sales · CM2</th><th>Diff</th><th>Promos · City</th><th>Promos · CM2</th><th>Diff</th><th>Ads + Vis spread</th></tr></thead><tbody>' + recon + '</tbody></table></div></div>'
     + '<div class="g2 mb20"><div class="card"><div class="thead-row"><div class="thead-title">Rates used</div></div><div class="twrap" style="max-height:none"><table class="tbl hgrid"><thead><tr><th>Portal</th><th>Comm.</th><th>GST</th><th>Direct Exp</th><th>Labour</th><th>Logistics</th><th class="l">Source</th></tr></thead><tbody>' + rates + '</tbody></table></div></div>'
     + '<div class="card"><div class="thead-row"><div class="thead-title">Instamart NLC SKUs (' + Object.keys(INFO.nlcSplit || {}).length + ')</div></div><div class="twrap" style="max-height:260px"><table class="tbl hgrid"><thead><tr><th>SKU</th><th>NLC Price</th><th>NLC share</th><th class="l">Share from</th></tr></thead><tbody>'
@@ -628,11 +623,11 @@ function exportWorking() {
         f(byQty ? 'F'+r : 'R'+r),
         f('SUMIFS($AA$2:$AA$'+L+',$A$2:$A$'+L+',A'+r+')'),
         f('IF(AB'+r+'=0,0,AA'+r+'/AB'+r+')'),
-        f('SUMIFS(Pools!$D:$D,Pools!$A:$A,A'+r+')'),
-        f('AD'+r+'*AC'+r),
-        f('Y'+r+'-Z'+r+'-AE'+r),
+        CM2_READY ? f('SUMIFS(Pools!$D:$D,Pools!$A:$A,A'+r+')') : 'n/a',
+        CM2_READY ? f('AD'+r+'*AC'+r) : 'n/a',
+        CM2_READY ? f('Y'+r+'-Z'+r+'-AE'+r) : 'n/a',
         f('IF(R'+r+'=0,0,Y'+r+'/R'+r+')'),
-        f('IF(R'+r+'=0,0,AF'+r+'/R'+r+')')]);
+        CM2_READY ? f('IF(R'+r+'=0,0,AF'+r+'/R'+r+')') : 'n/a']);
     });
     const ws = XLSX.utils.aoa_to_sheet(W);
     const money = ['G','H','J','P','Q','R','S','T','U','V','W','X','Y','Z','AA','AB','AD','AE','AF'], pcts = ['I','K','L','M','N','O','AC','AG','AH'];
@@ -644,7 +639,7 @@ function exportWorking() {
     const P = [['Portal','CM2 Ads','CM2 Visibility','Ads + Vis Pool','CM2 Net Sales','City files Net Sales','Diff %','Estimate % of NS','Basis']];
     PORTALS.forEach((p, i) => {
       const I = INFO.portals[p] || {}, t = I.cm2, r = i + 2;
-      if (I.est) P.push([pLabel(p), 0, 0, f('F'+r+'*H'+r), 0, f('SUMIFS(Working!$R:$R,Working!$A:$A,A'+r+')'), '', I.est.pct / 100, 'Estimated: ' + I.est.from + ' Ads + Vis as % of Net Sales × this month\'s Net Sales']);
+      if (!CM2_READY) P.push([pLabel(p), '', '', '', t ? t.netSales : 0, f('SUMIFS(Working!$R:$R,Working!$A:$A,A'+r+')'), t ? f('IF(E'+r+'=0,0,F'+r+'/E'+r+'-1)') : '', '', label + ' not ready in CM2 dashboard: no Ads + Vis, no CM2']);
       else P.push([pLabel(p), t ? t.ads : 0, t ? t.vis : 0, f('B'+r+'+C'+r), t ? t.netSales : 0,
         f('SUMIFS(Working!$R:$R,Working!$A:$A,A'+r+')'), f('IF(E'+r+'=0,0,F'+r+'/E'+r+'-1)'), '', t ? 'CM2 ' + label + ' actual' : 'No CM2 data']);
     });
@@ -659,10 +654,10 @@ function exportWorking() {
       const out = [SH], last = keys.length + 1, tr = last + 1;
       const sm = (c, r) => f('SUMIFS(Working!$' + c + '$2:$' + c + '$' + L + ',Working!$' + col + '$2:$' + col + '$' + L + ',$A' + r + ')');
       keys.forEach((k, i) => { const r = i + 2;
-        out.push([k, sm('F', r), sm('G', r), sm('R', r), sm('V', r), sm('Y', r), sm('Z', r), sm('AE', r), sm('AF', r),
-          f('IF($D$'+tr+'=0,0,D'+r+'/$D$'+tr+')'), f('IF(D'+r+'=0,0,F'+r+'/D'+r+')'), f('IF(C'+r+'=0,0,G'+r+'/C'+r+')'), f('IF(D'+r+'=0,0,I'+r+'/D'+r+')')]); });
-      out.push(['Total', ...['B','C','D','E','F','G','H','I'].map(c => f('SUM(' + c + '2:' + c + last + ')')),
-        f('IF(D'+tr+'=0,0,D'+tr+'/D'+tr+')'), f('IF(D'+tr+'=0,0,F'+tr+'/D'+tr+')'), f('IF(C'+tr+'=0,0,G'+tr+'/C'+tr+')'), f('IF(D'+tr+'=0,0,I'+tr+'/D'+tr+')')]);
+        out.push([k, sm('F', r), sm('G', r), sm('R', r), sm('V', r), sm('Y', r), sm('Z', r), CM2_READY ? sm('AE', r) : 'n/a', CM2_READY ? sm('AF', r) : 'n/a',
+          f('IF($D$'+tr+'=0,0,D'+r+'/$D$'+tr+')'), f('IF(D'+r+'=0,0,F'+r+'/D'+r+')'), f('IF(C'+r+'=0,0,G'+r+'/C'+r+')'), CM2_READY ? f('IF(D'+r+'=0,0,I'+r+'/D'+r+')') : 'n/a']); });
+      out.push(['Total', ...['B','C','D','E','F','G','H','I'].map(c => !CM2_READY && (c === 'H' || c === 'I') ? 'n/a' : f('SUM(' + c + '2:' + c + last + ')')),
+        f('IF(D'+tr+'=0,0,D'+tr+'/D'+tr+')'), f('IF(D'+tr+'=0,0,F'+tr+'/D'+tr+')'), f('IF(C'+tr+'=0,0,G'+tr+'/C'+tr+')'), CM2_READY ? f('IF(D'+tr+'=0,0,I'+tr+'/D'+tr+')') : 'n/a']);
       const w = XLSX.utils.aoa_to_sheet(out);
       for (let r = 2; r <= tr; r++) { ['B','C','D','E','F','G','H','I'].forEach(c => { if (w[c+r]) w[c+r].z = '#,##0'; }); ['J','K','L','M'].forEach(c => { if (w[c+r]) w[c+r].z = '0.00%'; }); }
       w['!cols'] = SH.map((h, i) => ({ wch: i === 0 ? 22 : 14 }));
@@ -677,7 +672,8 @@ function exportWorking() {
       ['Net Sales = Gross Sales ÷ (1 + GST %). Direct Exp, Labour, Logistics = % × Net Sales. Gross Margin = Net Sales − COGS − Direct Exp. CM1 = Gross Margin − Labour − Logistics.'],
       ['Cost / Unit: from the CM2 dashboard for the same month (latest earlier month if missing).'],
       ['Promos: straight from the city promo files. Promo rows without a SKU are spread over that city\'s SKUs in the same period by Net Sales.'],
-      ['Ads + Vis: CM2 portal total for the month (Pools sheet) × the row\'s share of that portal\'s ' + (byQty ? 'Qty' : 'Net Sales') + '. CM2 = CM1 − Promos − Ads + Vis.'],
+      [CM2_READY ? 'Ads + Vis: CM2 portal total for the month (Pools sheet) × the row\'s share of that portal\'s ' + (byQty ? 'Qty' : 'Net Sales') + '. CM2 = CM1 − Promos − Ads + Vis.'
+                 : label + ' is not ready in the CM2 dashboard, so Ads + Vis and CM2 are n/a. They fill in once the month is saved in CM2.'],
       ['Periods: 1st–10th, 11th–20th, 21st–month end, matching Zepto promo windows. Filter Working by Period to see one window.'],
       ['City / State sheets: SUMIFS on Working. Pools also compares city-file Net Sales with CM2 Net Sales per portal.']];
     const wn = XLSX.utils.aoa_to_sheet(notes); wn['!cols'] = [{ wch: 150 }];
@@ -867,7 +863,7 @@ function cm2Ref(p, ym) {
   const e = cm2Entry(p, ymLabel(ym));
   if (!e) { const have = cm2Months(p); return { why: ymLabel(ym) + ' not saved in CM2 for ' + pLabel(p) + (have.length ? '. CM2 has: ' + have.join(', ') : '') }; }
   const tt = totals(e.skus, e.nlcSkus, e.config || DEFAULT_CFG, e.portalTotals || {}, e.nlcTotals || {});
-  return { gmv: tt.gmv, promos: tt.promos };
+  return { gmv: tt.gmv, qty: tt.qty, promos: tt.promos };
 }
 function statusOf(ym, p, t) { return STATUS.find(s => s.ym === ym && s.portal === p && s.type === t) || null; }
 const dayRange = (a, b) => a ? +String(a).slice(8, 10) + '–' + +String(b).slice(8, 10) : '';
@@ -876,11 +872,14 @@ function statusCard() {
   const yms = [...new Set([...MONTHS_AVAIL, ...STATUS.map(s => s.ym)])].filter(Boolean).sort().reverse();
   const cell = (ym, p, t) => {
     const s = statusOf(ym, p, t); if (!s) return '<td class="neg">Missing</td>';
-    const full = +String(s.from).slice(8, 10) === 1 && +String(s.to).slice(8, 10) === daysIn(ym);
-    return '<td title="' + esc((s.file || '') + ' · ' + (s.at || '') + ' · ' + fmt(s.rows) + ' rows') + '">' + fmtL(t === 'sales' ? s.gmv : s.promos)
+    const full = +String(s.from).slice(8, 10) === 1 && +String(s.to).slice(8, 10) === daysIn(ym), ref = cm2Ref(p, ym);
+    const dif = (lbl, mine, r) => { if (ref.why || !r) return ''; const d = mine - r, ok = Math.abs(pct(d, r)) <= 1;
+      return '<div class="lbl-sm ' + (ok ? 'pos' : 'neg') + '" title="CM2 ' + lbl + ': ' + fmt(r) + '">' + lbl + ' ' + (d >= 0 ? '+' : '') + fmt(d) + ' vs CM2</div>'; };
+    const vs = t === 'sales' ? dif('GMV', s.gmv, ref.gmv) + dif('Qty', s.qty, ref.qty) + (p === 'blinkit' ? dif('Promos', s.promos, ref.promos) : '') : dif('Promos', s.promos, ref.promos);
+    return '<td title="' + esc((s.file || '') + ' · ' + (s.at || '') + ' · ' + fmt(s.rows) + ' rows') + '">' + fmtL(t === 'sales' ? s.gmv : s.promos) + vs
       + '<div class="lbl-sm"><span class="' + (full ? '' : 'neg') + '">days ' + dayRange(s.from, s.to) + '</span> · <a href="#" style="color:var(--neg)" onclick="clearUpload(\'' + ym + '\',\'' + p + '\',\'' + t + '\');return false">clear</a></div></td>';
   };
-  return '<div class="card mb20"><div class="thead-row"><div class="thead-title">Saved in sheet</div><div class="lbl-sm">Sales cells show GMV, promo cells show promos. Hover for file and time. Red days = partial month.</div></div>'
+  return '<div class="card mb20"><div class="thead-row"><div class="thead-title">Saved in sheet</div><div class="lbl-sm">Sales cells show GMV, promo cells show promos, with difference vs CM2 (green within ±1%). Hover for file and time. Red days = partial month.</div></div>'
     + (yms.length ? '<div class="twrap" style="max-height:340px"><table class="tbl hgrid"><thead><tr><th>Month</th>' + KINDS.map(k => '<th>' + k[2] + '</th>').join('') + '</tr></thead><tbody>'
       + yms.map(ym => '<tr><td>' + ymLabel(ym) + '</td>' + KINDS.map(k => cell(ym, k[0], k[1])).join('') + '</tr>').join('') + '</tbody></table></div>'
       : '<div class="empty">Nothing saved yet. Upload your first file below.</div>') + '</div>';
@@ -908,9 +907,10 @@ function vUpload() {
 
   if (!R || R.miss) return h + '<div class="card"><div class="warn-bar" style="margin:14px 18px">Pick a column for: ' + ((R && R.miss) || []).map(f => FIELD_LBL[f]).join(', ') + '</div></div>';
   // What gets checked against CM2: GMV for sales, promos for promo files, both for Blinkit (brand fund sits in the sales file)
-  const checks = isS ? [['GMV', 'gmv']].concat(T.p === 'blinkit' ? [['Promos', 'promos']] : []) : [['Promos', 'promos']];
-  const cmp = (mine, ref) => ref == null ? '<td class="muted">—</td><td class="muted">—</td>'
-    : '<td>₹' + fmt(ref) + '</td><td class="' + (Math.abs(pct(mine - ref, ref)) <= 1 ? 'pos' : 'neg') + '"><b>' + (ref ? fmtPct(pct(mine - ref, ref)) : '—') + '</b></td>';
+  const checks = isS ? [['GMV', 'gmv'], ['Qty', 'qty']].concat(T.p === 'blinkit' ? [['Promos', 'promos']] : []) : [['Promos', 'promos']];
+  const rs = k => k === 'qty' ? '' : '₹';
+  const cmp = (mine, ref, k) => ref == null ? '<td class="muted">—</td><td class="muted">—</td>'
+    : '<td>' + rs(k) + fmt(ref) + '</td><td class="' + (Math.abs(pct(mine - ref, ref)) <= 1 ? 'pos' : 'neg') + '"><b>' + (ref ? fmtPct(pct(mine - ref, ref)) : '—') + '</b></td>';
   const rows = R.list.map(M => {
     const ref = cm2Ref(T.p, M.ym), ex = statusOf(M.ym, T.p, T.t);
     const partial = +M.from.slice(8) > 1 || +M.to.slice(8) < daysIn(M.ym), notes = [];
@@ -919,15 +919,14 @@ function vUpload() {
     if (ref.why) notes.push('<span style="color:#9A5B00">' + esc(ref.why) + '</span>');
     return '<tr><td><label style="cursor:pointer"><input type="checkbox"' + (UP.sel[M.ym] ? ' checked' : '') + ' onchange="UP.sel[\'' + M.ym + '\']=this.checked;render()"> ' + ymLabel(M.ym) + '</label></td>'
       + '<td>' + dayRange(M.from, M.to) + '</td><td>' + fmt(M.raw) + '</td><td><b>' + fmt(M.out.length) + '</b></td><td>' + M.cities.size + '</td><td>' + M.skus.size + '</td>'
-      + (isS ? '<td>' + fmt(M.qty) + '</td>' : '')
-      + checks.map(([, k]) => '<td><b>₹' + fmt(M[k]) + '</b></td>' + cmp(M[k], ref.why ? null : ref[k])).join('')
+      + checks.map(([, k]) => '<td><b>' + rs(k) + fmt(M[k]) + '</b></td>' + cmp(M[k], ref.why ? null : ref[k], k)).join('')
       + '<td class="l lbl-sm">' + notes.join('<br>') + '</td></tr>';
   }).join('');
   const selN = R.list.filter(M => UP.sel[M.ym]).length;
   h += '<div class="card mb20"><div class="thead-row"><div class="thead-title">3 · Check against CM2 and save</div><div class="lbl-sm">Diff within ±1% shows green</div></div>'
     + (R.skipped ? '<div class="warn-bar">' + fmt(R.skipped) + ' rows skipped, no readable date (usually total rows): ' + esc(R.bad.join(', ')) + '</div>' : '')
     + '<div class="twrap" style="max-height:none"><table class="tbl hgrid"><thead><tr><th>Month</th><th>Days</th><th>File rows</th><th>Saved rows</th><th>Cities</th><th>SKUs</th>'
-    + (isS ? '<th>Qty</th>' : '') + checks.map(([l]) => '<th>' + l + '</th><th>CM2 ' + l + '</th><th>' + l + ' diff</th>').join('') + '<th class="l">Note</th></tr></thead><tbody>'
+    + checks.map(([l]) => '<th>' + l + '</th><th>CM2 ' + l + '</th><th>' + l + ' diff</th>').join('') + '<th class="l">Note</th></tr></thead><tbody>'
     + (rows || '<tr><td colspan="14" class="empty">No usable rows</td></tr>') + '</tbody></table></div>'
     + '<div style="padding:14px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><button class="btn primary"' + (UP.saving || !selN ? ' disabled' : '') + ' onclick="saveUpload()">'
     + (UP.saving ? 'Saving…' : 'Save ' + selN + ' month' + (selN === 1 ? '' : 's') + ' of ' + T.label) + '</button><span class="lbl-sm">' + esc(UP.msg) + '</span></div></div>';

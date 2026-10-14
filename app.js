@@ -245,7 +245,18 @@ function costIndex(label) {
       else if (o < target) idx.hist[id] = c;
     });
   });
-  return (p, key) => (idx.byP[p] && idx.byP[p][key]) || idx.any[key] || idx.hist[key] || null;
+  // CM2 Workings month tab (read by the City backend): used when the month is not yet saved in the CM2 dashboard
+  const sh = { byP:{}, any:{} };
+  ((DATA[ST.ym] || {}).cm2Cost || []).forEach(([portal, name, c]) => {
+    let p = String(portal || '').toLowerCase().trim(); if (p === 'swiggy') p = 'instamart'; if (!PORTALS.includes(p) || !(+c > 0)) return;
+    const id = identify(p, name).key; (sh.byP[p] = sh.byP[p] || {})[id] = +c; sh.any[id] = +c;
+  });
+  INFO.costSrc = { dash:0, sheet:0, prev:0 };
+  return (p, key) => {
+    const hit = (v, k) => { if (v) INFO.costSrc[k]++; return v || null; };
+    return hit(idx.byP[p] && idx.byP[p][key], 'dash') || hit(sh.byP[p] && sh.byP[p][key], 'sheet') || hit(idx.any[key], 'dash')
+        || hit(sh.any[key], 'sheet') || hit(idx.hist[key], 'prev');
+  };
 }
 function nlcIndex(label) {
   const exact = {}, base = {};
@@ -271,7 +282,7 @@ function buildFacts() {
     if (a && b) CITY_MAP[String(a).trim().toLowerCase().replace(/\s+/g, ' ')] = std;
     if (st) STATE_MAP[std.toLowerCase()] = String(st).trim();
   });
-  const cost = costIndex(label), nlc = nlcIndex(label), nDays = daysIn(ym);
+  const nlc = nlcIndex(label), nDays = daysIn(ym);
   // Instamart NLC share per product from CM2 for this month (NLC qty ÷ total qty).
   // Handles products that moved to NLC mid-way: before the switch CM2 has only regular qty → 0% NLC.
   const imE = cm2Entry('instamart', label), nlcSplit = {};
@@ -285,6 +296,7 @@ function buildFacts() {
     return { share: listed ? 1 : 0, src: listed ? 'NLC sheet (not in CM2 this month)' : '' };
   };
   INFO.nlcSplit = {}; INFO.nlcNoPrice = {};
+  const cost = costIndex(label);
   const src = {
     blinkit:   { sales: D.blinkit || [], promoDaily: [], promoRange: [] },
     zepto:     { sales: (D.zepto || {}).sales || [], promoDaily: (D.zepto || {}).promos || [], promoRange: [] },
@@ -466,7 +478,7 @@ function vOverview() {
     + '<div class="card mb20"><div class="thead-row"><div class="thead-title">Top 15 ' + geoWord(true, true) + ' by Net Sales</div><div style="display:flex;gap:10px;align-items:center"><span class="lbl-sm">Stacked by portal' + (CM2_READY ? ' · hover for CM2%' : '') + '</span>' + geoSeg() + '</div></div><div class="chart-box"><canvas id="ch-cities"></canvas></div></div>'
     + '<div class="card" id="card-cities"><div class="thead-row"><div class="thead-title">' + geoWord(false, true) + ' P&amp;L · ' + esc(scope()) + '</div>' + tableTools('card-cities', 'Search ' + geoWord(false)) + '</div>'
     + fsStrip(grand, scope())
-    + '<div class="note hide-fs">Net Sales: Blinkit & Zepto = GMV less commission less GST · Instamart NLC SKUs = Qty × NLC price less GST. ' + (CM2_READY ? 'Ads + Vis = CM2 portal total spread by ' + (ST.split === 'qty' ? 'qty' : 'net sales') + '.' : 'CM2 and Ads + Vis hidden: ' + NOT_READY() + '. CM1 uses rates and cost from ' + ((INFO.portals[PORTALS.find(p => INFO.portals[p])] || {}).rateSrc || 'CM2') + '.') + ' Click a row to see each portal.</div>'
+    + '<div class="note hide-fs">Net Sales: Blinkit & Zepto = GMV less commission less GST · Instamart NLC SKUs = Qty × NLC price less GST. ' + (CM2_READY ? 'Ads + Vis = CM2 portal total spread by ' + (ST.split === 'qty' ? 'qty' : 'net sales') + '.' : 'CM2 and Ads + Vis hidden: ' + NOT_READY() + '. CM1 uses ' + ymLabel(ST.ym) + ' cost per unit from the CM2 Workings tab, and commission, GST, direct exp, labour and logistics % from ' + ((INFO.portals[PORTALS.find(p => INFO.portals[p])] || {}).rateSrc || 'CM2') + ' until the month is saved in CM2.') + ' Click a row to see each portal.</div>'
     + plTable('c', cities, grand, geoWord(false, true)) + '</div>';
 }
 function drawOverviewChart() {
@@ -564,7 +576,7 @@ function vHealth() {
   const bar = (ok, okMsg, warnMsg, btn) => ok ? '<div class="ok-bar">' + okMsg + '</div>' : '<div class="warn-bar">' + warnMsg + (btn || '') + '</div>';
   return '<div class="ph"><div><div class="ph-title">Data Health</div><div class="ph-sub">' + label + ' · checks against the CM2 dashboard</div></div>' + filters(false) + '</div>'
     + '<div class="card mb20"><div class="thead-row"><div class="thead-title">Reconciliation vs CM2 · ' + label + '</div><div class="lbl-sm">Within ±1% shows green</div></div>'
-    + (CM2_OK ? (CM2_READY ? '' : '<div class="warn-bar">' + NOT_READY() + ' for every portal, so CM2 and Ads + Vis are not calculated. CM1 uses the latest CM2 month\'s rates and cost (see Rates used).</div>') : '<div class="warn-bar">CM2 backend could not be loaded, so rates are defaults and CM2 is not calculated.</div>')
+    + (CM2_OK ? (CM2_READY ? '' : '<div class="warn-bar">' + NOT_READY() + ' for every portal, so CM2 and Ads + Vis are not calculated. CM1 uses this month\'s cost from the CM2 Workings tab and the latest CM2 month\'s % rates (see Rates used and Cost per unit).</div>') : '<div class="warn-bar">CM2 backend could not be loaded, so rates are defaults and CM2 is not calculated.</div>')
     + '<div class="twrap" style="max-height:none"><table class="tbl hgrid"><thead><tr><th>Portal</th><th>GMV · City files</th><th>GMV · CM2</th><th>Diff</th><th>Net Sales · City</th><th>Net Sales · CM2</th><th>Diff</th><th>Promos · City</th><th>Promos · CM2</th><th>Diff</th><th>Ads + Vis spread</th></tr></thead><tbody>' + recon + '</tbody></table></div></div>'
     + '<div class="g2 mb20"><div class="card"><div class="thead-row"><div class="thead-title">Rates used</div></div><div class="twrap" style="max-height:none"><table class="tbl hgrid"><thead><tr><th>Portal</th><th>Comm.</th><th>GST</th><th>Direct Exp</th><th>Labour</th><th>Logistics</th><th class="l">Source</th></tr></thead><tbody>' + rates + '</tbody></table></div></div>'
     + '<div class="card"><div class="thead-row"><div class="thead-title">Instamart NLC SKUs (' + Object.keys(INFO.nlcSplit || {}).length + ')</div></div><div class="twrap" style="max-height:260px"><table class="tbl hgrid"><thead><tr><th>SKU</th><th>NLC Price</th><th>NLC share</th><th class="l">Share from</th></tr></thead><tbody>'
@@ -575,6 +587,8 @@ function vHealth() {
     + bar(!unm.length, 'All city file SKU names are in SKU_Map (shared with CM2).', unm.length + ' SKU names not in SKU_Map, matched automatically. Add them to the CM2 SKU_Map tab. ', '<button class="btn" onclick="copyTSV(\'UNMAPPED_TSV\')">📋 Copy unmapped</button>')
     + (unm.length ? '<div class="twrap" style="max-height:260px"><table class="tbl hgrid"><thead><tr><th>Portal SKU name</th><th class="l">Portal</th><th class="l">Matched as</th></tr></thead><tbody>' + unm.map(u => '<tr><td title="' + esc(u.sku) + '">' + esc(u.sku) + '</td><td class="l">' + pLabel(u.p) + '</td><td class="l muted">' + esc(u.label) + '</td></tr>').join('') + '</tbody></table></div>' : '') + '</div>'
     + '<div class="card mb20"><div class="thead-row"><div class="thead-title">Cost per unit</div></div>'
+    + (() => { const c = INFO.costSrc || {}, t = (c.dash || 0) + (c.sheet || 0) + (c.prev || 0); if (!t) return '';
+        return '<div class="' + (c.prev ? 'warn-bar' : 'ok-bar') + '">Cost per unit source (sales rows): CM2 dashboard ' + label + ' ' + fmtPct(pct(c.dash, t)) + ' · CM2 Workings ' + label + ' tab ' + fmtPct(pct(c.sheet, t)) + ' · earlier month ' + fmtPct(pct(c.prev, t)) + '</div>'; })()
     + bar(!miss.length, 'Every SKU found a cost per unit in CM2.', miss.length + ' SKUs have no cost in CM2 for this or earlier months, so COGS is zero for them.')
     + (miss.length ? '<div class="twrap" style="max-height:220px"><table class="tbl hgrid"><thead><tr><th>SKU</th><th class="l">Portal</th><th>Qty</th></tr></thead><tbody>' + miss.map(m => '<tr><td>' + esc(m.label) + '</td><td class="l">' + pLabel(m.p) + '</td><td>' + fmt(m.qty) + '</td></tr>').join('') + '</tbody></table></div>' : '') + '</div>'
     + '<div class="card mb20"><div class="thead-row"><div class="thead-title">City names (' + cityRows.length + ')</div><button class="btn" onclick="copyTSV(\'CITY_TSV\')">📋 Copy cities without state</button></div>'
